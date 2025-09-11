@@ -25,3 +25,6 @@ steps:
 # Store the final image in Artifact Registry for traceability
 images:
 - 'us-central1-docker.pkg.dev/typo-442017/chatbot-repo/faq_agent:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
