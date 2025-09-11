@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+google-cloud-aiplatform
+google-genai
+google-adk
+toolbox-core
