@@ -17,7 +17,7 @@ steps:
     - '--image=us-central1-docker.pkg.dev/typo-442017/chatbot-repo/faq_agent:latest'
     - '--platform=managed'
     - '--region=us-central1'
-    - '--service-account=faq-agent-sa@$PROJECT_ID.iam.gserviceaccount.com'
+    - '--service-account=p-rex-deployment@typoapp-442017.iam.gserviceaccount.com'
     - '--allow-unauthenticated'
     - '--use-http2'
     - '--set-env-vars=PROJECT_ID=typo-442017,ORG_ID=5,TOOLBOX_URL=https://toolbox-aua232uyqa-uc.a.run.app'
