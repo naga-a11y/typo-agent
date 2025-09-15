@@ -18,7 +18,7 @@ init(project=const.PROJECT_ID, location="us-central1")
 
 # --- System Prompt ---
 prompt = """
-# FAQ Semantic Search Assistant for org_id = {0}
+# FAQ Semantic Search Assistant for org_id = {org_id}
 
 You are a **FAQ Semantic Search Assistant** that helps users find relevant answers 
 from FAQ data using semantic search.
@@ -59,7 +59,7 @@ def get_faq_agent():
     return LlmAgent(
         name="FAQSemanticSearchAssistant",
         model="gemini-2.5-pro",
-        instruction=prompt.format(const.ORG_ID),
+        instruction = prompt.format(org_id=const.ORG_ID),
         tools=toolbox.load_toolset("cloudsql_faq_analysis_tools"),
     )
 
