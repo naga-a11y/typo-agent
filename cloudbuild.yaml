@@ -1,11 +1,21 @@
 steps:
 # 1. Build the container image
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo:latest', '.']
+  args:
+    [
+      'build',
+      '-t',
+      'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest',
+      '.'
+    ]
 
 # 2. Push the container image to Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['push', 'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo:latest']
+  args:
+    [
+      'push',
+      'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest'
+    ]
 
 # 3. Deploy the container image to Cloud Run
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -13,8 +23,8 @@ steps:
   args:
     - 'run'
     - 'deploy'
-    - 'faq_agent'
-    - '--image=us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo:latest'
+    - 'faq-agent'
+    - '--image=us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest'
     - '--platform=managed'
     - '--region=us-central1'
     - '--service-account=p-rex-deployment@typoapp-442017.iam.gserviceaccount.com'
@@ -24,7 +34,7 @@ steps:
 
 # Store the final image in Artifact Registry for traceability
 images:
-- 'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo:latest'
+  - 'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
