@@ -14,5 +14,5 @@ COPY . .
 # Expose Cloud Run expected port
 EXPOSE 8080
 
-# Start FastAPI with uvicorn, binding to Cloud Run's $PORT
-CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
+# Correct entrypoint so Cloud Run injects $PORT
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
