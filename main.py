@@ -2,6 +2,7 @@ import os
 import warnings
 import logging
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from vertexai import init
 from google.genai import types
@@ -215,6 +216,85 @@ async def query_faq_get(query: str, org_id: str = "default"):
     """Simple GET endpoint for testing"""
     request = QueryRequest(query=query, org_id=org_id)
     return await query_faq(request)
+
+
+@app.get("/chat")
+async def chat_ui():
+    """Simple frontend chatbot UI"""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>FAQ Chatbot</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #f9f9f9; margin: 0; padding: 0; }
+            #chat-container { max-width: 600px; margin: 30px auto; border: 1px solid #ddd; background: #fff; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+            #chat { height: 400px; overflow-y: auto; padding: 15px; border-bottom: 1px solid #eee; }
+            .message { margin: 10px 0; }
+            .user { text-align: right; color: green; }
+            .bot { text-align: left; color: blue; }
+            #input-container { display: flex; padding: 10px; }
+            #query { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+            #send { margin-left: 10px; padding: 10px 15px; border: none; background: #007bff; color: white; border-radius: 5px; cursor: pointer; }
+            #send:hover { background: #0056b3; }
+        </style>
+    </head>
+    <body>
+        <div id="chat-container">
+            <div id="chat"></div>
+            <div id="input-container">
+                <input type="text" id="query" placeholder="Ask a question..." />
+                <button id="send">Send</button>
+            </div>
+        </div>
+
+        <script>
+            const chatBox = document.getElementById("chat");
+            const queryInput = document.getElementById("query");
+            const sendButton = document.getElementById("send");
+
+            function addMessage(text, sender) {
+                const msgDiv = document.createElement("div");
+                msgDiv.className = "message " + sender;
+                msgDiv.textContent = text;
+                chatBox.appendChild(msgDiv);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
+
+            async function sendQuery() {
+                const query = queryInput.value.trim();
+                if (!query) return;
+
+                addMessage("You: " + query, "user");
+                queryInput.value = "";
+
+                try {
+                    const response = await fetch("/query", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ query: query, org_id: "default" })
+                    });
+                    const data = await response.json();
+                    if (data.answer) {
+                        addMessage("Bot: " + data.answer, "bot");
+                    } else {
+                        addMessage("Bot: (No response)", "bot");
+                    }
+                } catch (err) {
+                    addMessage("Bot: Error connecting to server", "bot");
+                }
+            }
+
+            sendButton.addEventListener("click", sendQuery);
+            queryInput.addEventListener("keydown", function(e) {
+                if (e.key === "Enter") sendQuery();
+            });
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html_content)
+
 
 # --- Entry point ---
 if __name__ == "__main__":
