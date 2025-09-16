@@ -1,18 +1,18 @@
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from fastapi import FastAPI
 
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b'Hello from Cloud Run! Server is working.')
+app = FastAPI()
 
-    def log_message(self, format, *args):
-        print(format % args)
+@app.get("/")
+def read_root():
+    return {"message": "Hello from Cloud Run! Server is working."}
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
     print(f"Starting server on port {port}")
-    server = HTTPServer(('', port), SimpleHandler)
-    server.serve_forever()
+    uvicorn.run(app, host="0.0.0.0", port=port)
