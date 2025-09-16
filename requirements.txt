@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
-pydantic
 google-cloud-aiplatform
+google-genai
+google-adk
+toolbox-core
 vertexai
-toolbox_core
