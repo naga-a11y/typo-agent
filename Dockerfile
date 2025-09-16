@@ -1,9 +1,11 @@
+# Use Python 3.11 slim image
 FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Set working directory
 WORKDIR /app
 
 # Copy requirements and install dependencies
@@ -17,5 +19,5 @@ COPY . .
 # Expose port
 EXPOSE 8080
 
-# Start uvicorn with production settings
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --log-level info --access-log --loop asyncio"]
+# Start the application
+CMD exec uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
