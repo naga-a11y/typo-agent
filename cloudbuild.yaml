@@ -8,7 +8,6 @@ steps:
       'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest',
       '.'
     ]
-
 # 2. Push the container image to Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
   args:
@@ -16,7 +15,6 @@ steps:
       'push',
       'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest'
     ]
-
 # 3. Deploy the container image to Cloud Run
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
@@ -29,12 +27,18 @@ steps:
     - '--region=us-central1'
     - '--service-account=p-rex-deployment@typoapp-442017.iam.gserviceaccount.com'
     - '--allow-unauthenticated'
-    - '--use-http2'
+    - '--memory=2Gi'
+    - '--cpu=1'
+    - '--timeout=900'
+    - '--concurrency=10'
+    - '--min-instances=1'
+    - '--max-instances=10'
+    - '--port=8080'
+    - '--execution-environment=gen2'
+    - '--cpu-boost'
     - '--set-env-vars=PROJECT_ID=typoapp-442017,ORG_ID=5,TOOLBOX_URL=https://toolbox-aua232uyqa-uc.a.run.app'
-
 # Store the final image in Artifact Registry for traceability
 images:
   - 'us-central1-docker.pkg.dev/typoapp-442017/chatbot-repo/faq-agent:latest'
-
 options:
   logging: CLOUD_LOGGING_ONLY
