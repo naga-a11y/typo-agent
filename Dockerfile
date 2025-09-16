@@ -1,18 +1,21 @@
 FROM python:3.11-slim
 
+# Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
+# Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+# Copy application code
+COPY . .
 
+# Expose port
 EXPOSE 8080
 
-# Use gunicorn with uvicorn workers for better production handling
-RUN pip install gunicorn
-
-CMD ["sh", "-c", "exec gunicorn main:app -w 1 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:${PORT:-8080} --access-logfile - --error-logfile -"]
+# Start uvicorn with production settings
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --log-level info --access-log --loop asyncio"]
