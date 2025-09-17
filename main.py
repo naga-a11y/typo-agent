@@ -24,19 +24,29 @@ warnings.filterwarnings("ignore", message=".*non-text parts in the response.*")
 
 # --- System Prompt ---
 prompt = """
-# FAQ Semantic Search Assistant
+# FAQ Semantic Search Assistant & Engineering Management Coach
 
-You are a **FAQ Semantic Search Assistant** that helps users find relevant answers 
-from FAQ data using semantic search.
+You are a **FAQ Semantic Search Assistant** that helps users find relevant answers from FAQ data using semantic search. When queries relate to engineering management, delivery, or organizational effectiveness, you also act as a seasoned Engineering Management Coach and Data-Driven Delivery Expert.
+
+## Identity & Audience
+- Act as a trusted peer to CTOs, VPs Engineering, and Directors
+- Tone: analytical, direct, grounded. No fluff, no buzzwords, no vendor pitch
+- Help organizations adopt evidence-based practices using DORA, DX Core Four, SPACE, and DevEx frameworks
+
+## Operating Principles
+- Evidence first. Prefer distributions (median, p25–p75, IQR) over simple averages
+- Prioritize causality over correlation; call out confounders and seasonality
+- Emphasize team-level patterns, systemic blockers, and long-term trends; avoid individual blame
+- If signal is weak or data is missing, state uncertainty clearly and specify what's needed
 
 ## Organization Context
 When a user provides an organization ID, search in that organization's specific FAQ first:
-- **org_id 4**: GroundWorks
-- **org_id 5**: Method  
-- **org_id 6**: WL Development
-- **org_id 7**: PatientNow
-- **org_id 8**: JemHR
-- **org_id 9**: ToursByLocal
+- **org_id 4**: GroundWorks - Construction/Ground services
+- **org_id 5**: Method - Business methodology 
+- **org_id 6**: WL Development - Development services
+- **org_id 7**: PatientNow - Healthcare/Patient management
+- **org_id 8**: JemHR - Human resources
+- **org_id 9**: ToursByLocal - Tourism/Travel services
 
 ## Data Sources
 1. **Organization-specific FAQs**: `typo_org.faq_config`
@@ -62,21 +72,27 @@ When a user provides an organization ID, search in that organization's specific 
    - Directly call `search_faq_entries_semantic` to search global FAQ database
    - Return top 1-3 most relevant answers
 
+## Response Structure
+For engineering management queries, structure every answer as:
+1) **Executive summary**: headline insight and why it matters
+2) **Drivers**: likely causes and systemic patterns (not people)
+3) **Risks & caveats**: data gaps, confounders, trade-offs
+4) **Next data to pull**: the minimal additions to increase confidence
+
 ## Response Guidelines
 - **Content Only**: Show only the FAQ text/answer content to users
 - **No Metadata**: Do not display similarity scores, created_at, or embedding data
 - **Concise & Clear**: Keep answers focused and relevant to the user's query
-- **Helpful Fallback**: If no relevant answers found, suggest rephrasing or provide general guidance
+- **Evidence-Based**: Challenge surface interpretations; explain the "because → therefore" chain
+- **Crisp Communication**: Use verbs over adjectives, meaningful numbers, bullets when helpful
+- **System Focus**: Avoid moral language; focus on system design
 - **Context Aware**: Acknowledge when searching organization-specific vs global FAQs
+- **Helpful Fallback**: If no relevant answers found, suggest rephrasing or provide general guidance
 
-## Organization Recognition
-Always recognize when a query is for a specific organization:
-- GroundWorks (ID: 4) - Construction/Ground services
-- Method (ID: 5) - Business methodology 
-- WL Development (ID: 6) - Development services
-- PatientNow (ID: 7) - Healthcare/Patient management
-- JemHR (ID: 8) - Human resources
-- ToursByLocal (ID: 9) - Tourism/Travel services
+## Interaction Rules
+- Ask at most one clarifying question only if it prevents a wrong recommendation
+- If signal is weak or data is missing, state uncertainty clearly
+- Prefer verbs over adjectives. Example: "Because lead time p75 increased 28% post-release freeze, start X; expect p75 ↓ 10–15% in 2 sprints"
 """
 
 # --- Request/Response Models ---
@@ -393,6 +409,59 @@ async def chat_ui():
                 border-bottom-left-radius: 6px;
             }
             
+            /* Markdown formatting styles */
+            .bot .message-content h2,
+            .bot .message-content h3,
+            .bot .message-content h4,
+            .bot .message-content h5 {
+                color: #495057;
+                margin: 12px 0 6px 0;
+                font-weight: 600;
+            }
+            
+            .bot .message-content h2 { font-size: 16px; }
+            .bot .message-content h3 { font-size: 15px; }
+            .bot .message-content h4 { font-size: 14px; }
+            .bot .message-content h5 { font-size: 13px; }
+            
+            .bot .message-content p {
+                margin: 6px 0;
+                line-height: 1.5;
+            }
+            
+            .bot .message-content strong {
+                color: #343a40;
+                font-weight: 600;
+            }
+            
+            .bot .message-content em {
+                font-style: italic;
+                color: #6c757d;
+            }
+            
+            .bot .message-content code {
+                background: #e9ecef !important;
+                color: #e83e8c !important;
+                padding: 2px 4px !important;
+                border-radius: 3px !important;
+                font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
+                font-size: 12px !important;
+            }
+            
+            .bot .message-content ul {
+                margin: 8px 0;
+                padding-left: 20px;
+            }
+            
+            .bot .message-content li {
+                margin: 4px 0;
+                line-height: 1.4;
+            }
+            
+            .bot .message-content br {
+                line-height: 1.6;
+            }
+            
             .avatar {
                 width: 32px;
                 height: 32px;
@@ -552,6 +621,54 @@ async def chat_ui():
             const orgSelect = document.getElementById("orgSelect");
             const typingIndicator = document.querySelector(".typing");
 
+            function parseMarkdown(text) {
+                // Convert markdown formatting to HTML
+                let html = text
+                    // Escape HTML first
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    
+                    // Bold text: **text** or ***text***
+                    .replace(/\*\*\*([^*]+)\*\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*\*([^*]+)\*\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                    
+                    // Italic text: *text* (but not when part of **)
+                    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                    
+                    // Code blocks: `code`
+                    .replace(/`([^`]+)`/g, '<code>$1</code>')
+                    
+                    // Headers
+                    .replace(/^#### (.+)$/gm, '<h5>$1</h5>')
+                    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+                    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+                    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+                    
+                    // Bullet points: - item or * item
+                    .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
+                    
+                    // Numbered lists: 1. item
+                    .replace(/^\s*\d+\.\s+(.+)$/gm, '<li>$1</li>')
+                    
+                    // Line breaks and paragraphs
+                    .replace(/\n\s*\n/g, '</p><p>')
+                    .replace(/\n/g, '<br>');
+                
+                // Wrap consecutive <li> elements in <ul>
+                html = html.replace(/(<li>.*?<\/li>)(?:\s*<li>.*?<\/li>)*/g, function(match) {
+                    return '<ul>' + match + '</ul>';
+                });
+                
+                // Wrap in paragraph if not already wrapped
+                if (!html.includes('<p>') && !html.includes('<h') && !html.includes('<ul>')) {
+                    html = '<p>' + html + '</p>';
+                }
+                
+                return html;
+            }
+
             function addMessage(text, sender, showOrgBadge = false) {
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message " + sender;
@@ -567,6 +684,9 @@ async def chat_ui():
                     const orgValue = orgSelect.value;
                     const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
                     content.innerHTML = text + `<span class="org-badge">${orgText}</span>`;
+                } else if (sender === "bot") {
+                    // Parse markdown for bot responses
+                    content.innerHTML = parseMarkdown(text);
                 } else {
                     content.textContent = text;
                 }
