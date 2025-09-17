@@ -1,9 +1,10 @@
 import os
 import warnings
 import logging
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from vertexai import init
 from google.genai import types
 from google.adk.agents.llm_agent import LlmAgent
@@ -79,9 +80,18 @@ Always recognize when a query is for a specific organization:
 """
 
 # --- Request/Response Models ---
+from typing import Optional
+from pydantic import validator
+
 class QueryRequest(BaseModel):
     query: str
-    org_id: str = None  # Changed default to None
+    org_id: Optional[str] = None
+
+    @validator('org_id', pre=True)
+    def empty_string_to_none(cls, v):
+        if v == '' or v is None:
+            return None
+        return v
 
 class QueryResponse(BaseModel):
     answer: str
@@ -581,7 +591,7 @@ async def chat_ui():
                 if (!query) return;
 
                 const selectedOrg = orgSelect.value;
-                const orgId = selectedOrg || null;
+                const orgId = selectedOrg || null;  // Convert empty string to null
 
                 // Add user message with org badge
                 addMessage(query, "user", true);
@@ -593,7 +603,7 @@ async def chat_ui():
                 try {
                     const requestBody = {
                         query: query,
-                        org_id: orgId
+                        org_id: orgId  // This will be null if no org selected
                     };
 
                     const response = await fetch("/query", {
