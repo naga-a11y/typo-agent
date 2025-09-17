@@ -28,46 +28,75 @@ prompt = """
 You are a **FAQ Semantic Search Assistant** that helps users find relevant answers 
 from FAQ data using semantic search.
 
-## Role
-- If the user asks about a **specific organization** (query includes an `org_id` or org reference), 
-  then first check `typo_org.faq_config` for that organization.
-- If the user does **not** mention any organization, or no org_id is provided, 
-  then always answer from the global FAQ `typo_org.faq_entries`.
+## Organization Context
+When a user provides an organization ID, search in that organization's specific FAQ first:
+- **org_id 4**: GroundWorks
+- **org_id 5**: Method  
+- **org_id 6**: WL Development
+- **org_id 7**: PatientNow
+- **org_id 8**: JemHR
+- **org_id 9**: ToursByLocal
 
-## Data sources
-1. CloudSQL table: `typo_org.faq_config`
-   - id, org_id, text, embedding, created_at
-2. CloudSQL table: `typo_org.faq_entries`
-   - id, text, embedding, created_at
+## Data Sources
+1. **Organization-specific FAQs**: `typo_org.faq_config`
+   - Contains custom FAQ entries for specific organizations
+   - Fields: id, org_id, text, embedding, created_at
+   
+2. **Global FAQ Database**: `typo_org.faq_entries`  
+   - Contains general FAQ entries available to all users
+   - Fields: id, text, embedding, created_at
 
-## How to search
-Tools available:
-- `search_faq_config_semantic` (search org-specific config by org_id + query)
-- `search_faq_entries_semantic` (fallback global FAQ search)
+## Search Strategy
+**Tool Functions Available:**
+- `search_faq_config_semantic(org_id, query)` - Search organization-specific FAQs
+- `search_faq_entries_semantic(query)` - Search global FAQ database
 
-### Process
-1. If the query includes an `org_id` or clearly refers to a specific organization:
-   - Call `search_faq_config_semantic` with { "org_id": <org_id>, "query": <user query> }.
-   - If good results exist, return the top 1–3 answers.
-   - If no good results exist, fallback to `search_faq_entries_semantic`.
-2. If the query does **not** mention an org or org_id:
-   - Directly call `search_faq_entries_semantic` and return the top 1–3 answers.
+**Search Process:**
+1. **If org_id is provided (4, 5, 6, 7, 8, or 9):**
+   - First call `search_faq_config_semantic` with the specific org_id and query
+   - If good results found (high similarity), return top 1-3 answers
+   - If no good org-specific results, fallback to `search_faq_entries_semantic`
 
-## Response rules
-- Show **only the text (definition or answer)** to the user.
-- Do **NOT** show similarity scores, embeddings, or created_at fields.
-- If nothing relevant is found, ask clarifying questions or suggest documentation.
-- Keep answers concise, direct, and focused on the user’s query.
+2. **If no org_id provided:**
+   - Directly call `search_faq_entries_semantic` to search global FAQ database
+   - Return top 1-3 most relevant answers
+
+## Response Guidelines
+- **Content Only**: Show only the FAQ text/answer content to users
+- **No Metadata**: Do not display similarity scores, created_at, or embedding data
+- **Concise & Clear**: Keep answers focused and relevant to the user's query
+- **Helpful Fallback**: If no relevant answers found, suggest rephrasing or provide general guidance
+- **Context Aware**: Acknowledge when searching organization-specific vs global FAQs
+
+## Organization Recognition
+Always recognize when a query is for a specific organization:
+- GroundWorks (ID: 4) - Construction/Ground services
+- Method (ID: 5) - Business methodology 
+- WL Development (ID: 6) - Development services
+- PatientNow (ID: 7) - Healthcare/Patient management
+- JemHR (ID: 8) - Human resources
+- ToursByLocal (ID: 9) - Tourism/Travel services
 """
 
 # --- Request/Response Models ---
 class QueryRequest(BaseModel):
     query: str
-    org_id: str = "default"
+    org_id: str = None  # Changed default to None
 
 class QueryResponse(BaseModel):
     answer: str
     status: str = "success"
+    org_info: str = None  # Add org info for debugging
+
+# Organization mapping for reference
+ORG_MAPPING = {
+    "4": "GroundWorks",
+    "5": "Method", 
+    "6": "WL Development",
+    "7": "PatientNow",
+    "8": "JemHR",
+    "9": "ToursByLocal"
+}
 
 # --- FastAPI app ---
 app = FastAPI(title="FAQ Semantic Search API", version="1.0.0")
@@ -138,19 +167,21 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "initialized": runner is not None,
+        "organizations": ORG_MAPPING,
         "endpoints": {
             "POST /query": "Submit FAQ query with JSON body",
             "GET /query": "Submit FAQ query with query parameters",
+            "GET /chat": "Web-based chat interface",
             "GET /healthz": "Health check",
             "GET /ready": "Readiness check"
         },
         "example_usage": {
             "POST": {
                 "url": "/query",
-                "body": {"query": "How to reset password?", "org_id": "acme_corp"}
+                "body": {"query": "How to reset password?", "org_id": "5"}
             },
             "GET": {
-                "url": "/query?query=How to reset password?&org_id=acme_corp"
+                "url": "/query?query=How to reset password?&org_id=5"
             }
         }
     }
@@ -180,10 +211,16 @@ async def query_faq(request: QueryRequest):
         if runner is None:
             await initialize_components()
         
-        logger.info(f"Received query: {request.query} for org_id: {request.org_id}")
+        # Get organization info
+        org_name = ORG_MAPPING.get(request.org_id, "No Organization") if request.org_id else "No Organization"
+        logger.info(f"Received query: '{request.query}' for org_id: {request.org_id} ({org_name})")
         
-        # Create user message with org_id context
-        query_with_context = f"org_id: {request.org_id}\nQuery: {request.query}"
+        # Create user message with proper org_id context
+        if request.org_id:
+            query_with_context = f"Organization ID: {request.org_id} (Organization: {org_name})\nUser Query: {request.query}"
+        else:
+            query_with_context = f"No specific organization selected\nUser Query: {request.query}"
+            
         user_content = types.Content(role="user", parts=[types.Part(text=query_with_context)])
         run_config = RunConfig(streaming_mode=StreamingMode.NONE)
 
@@ -208,7 +245,10 @@ async def query_faq(request: QueryRequest):
 
         logger.info(f"Generated response: {response_text[:100]}...")
         
-        return QueryResponse(answer=response_text.strip())
+        return QueryResponse(
+            answer=response_text.strip(),
+            org_info=f"Searched in: {org_name}" if request.org_id else "Searched in: Global FAQ Database"
+        )
         
     except Exception as e:
         logger.error(f"Query failed: {str(e)}")
@@ -216,38 +256,281 @@ async def query_faq(request: QueryRequest):
 
 # --- Simple GET endpoint for testing ---
 @app.get("/query")
-async def query_faq_get(query: str, org_id: str = "default"):
+async def query_faq_get(query: str, org_id: str = None):
     """Simple GET endpoint for testing"""
     request = QueryRequest(query=query, org_id=org_id)
     return await query_faq(request)
 
-
 @app.get("/chat")
 async def chat_ui():
-    """Simple frontend chatbot UI"""
+    """Enhanced frontend chatbot UI with organization selection"""
     html_content = """
     <!DOCTYPE html>
     <html>
     <head>
         <title>FAQ Chatbot</title>
         <style>
-            body { font-family: Arial, sans-serif; background: #f9f9f9; margin: 0; padding: 0; }
-            #chat-container { max-width: 600px; margin: 30px auto; border: 1px solid #ddd; background: #fff; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
-            #chat { height: 400px; overflow-y: auto; padding: 15px; border-bottom: 1px solid #eee; }
-            .message { margin: 10px 0; }
-            .user { text-align: right; color: green; }
-            .bot { text-align: left; color: blue; }
-            #input-container { display: flex; padding: 10px; }
-            #query { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
-            #send { margin-left: 10px; padding: 10px 15px; border: none; background: #007bff; color: white; border-radius: 5px; cursor: pointer; }
-            #send:hover { background: #0056b3; }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+            }
+            
+            .header {
+                text-align: center;
+                color: white;
+                margin-bottom: 30px;
+            }
+            
+            .header h1 {
+                font-size: 2.5em;
+                font-weight: 700;
+                margin-bottom: 10px;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            }
+            
+            .header p {
+                font-size: 1.1em;
+                opacity: 0.9;
+            }
+            
+            #chat-container { 
+                max-width: 700px; 
+                margin: 0 auto; 
+                background: white;
+                border-radius: 15px; 
+                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                overflow: hidden;
+            }
+            
+            .controls {
+                background: #f8f9fa;
+                padding: 20px;
+                border-bottom: 1px solid #e9ecef;
+            }
+            
+            .org-selector {
+                display: flex;
+                align-items: center;
+                gap: 15px;
+            }
+            
+            .org-selector label {
+                font-weight: 600;
+                color: #495057;
+                font-size: 14px;
+            }
+            
+            #orgSelect {
+                padding: 8px 12px;
+                border: 2px solid #dee2e6;
+                border-radius: 8px;
+                font-size: 14px;
+                background: white;
+                color: #495057;
+                cursor: pointer;
+                transition: border-color 0.2s;
+            }
+            
+            #orgSelect:focus {
+                outline: none;
+                border-color: #667eea;
+            }
+            
+            #chat { 
+                height: 450px; 
+                overflow-y: auto; 
+                padding: 20px;
+                background: white;
+            }
+            
+            .message { 
+                margin: 15px 0;
+                display: flex;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            
+            .user { 
+                justify-content: flex-end;
+            }
+            
+            .bot {
+                justify-content: flex-start;
+            }
+            
+            .message-content {
+                max-width: 80%;
+                padding: 12px 16px;
+                border-radius: 18px;
+                font-size: 14px;
+                line-height: 1.4;
+                word-wrap: break-word;
+            }
+            
+            .user .message-content {
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: white;
+                border-bottom-right-radius: 6px;
+            }
+            
+            .bot .message-content {
+                background: #f8f9fa;
+                color: #495057;
+                border: 1px solid #e9ecef;
+                border-bottom-left-radius: 6px;
+            }
+            
+            .avatar {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                font-weight: bold;
+                flex-shrink: 0;
+            }
+            
+            .user .avatar {
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: white;
+                order: 1;
+            }
+            
+            .bot .avatar {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+            
+            #input-container { 
+                display: flex; 
+                padding: 20px;
+                background: #f8f9fa;
+                gap: 10px;
+                align-items: center;
+            }
+            
+            #query { 
+                flex: 1; 
+                padding: 12px 16px;
+                border: 2px solid #dee2e6;
+                border-radius: 25px;
+                font-size: 14px;
+                outline: none;
+                transition: border-color 0.2s;
+            }
+            
+            #query:focus {
+                border-color: #667eea;
+            }
+            
+            #send { 
+                padding: 12px 24px;
+                border: none;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: white;
+                border-radius: 25px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            
+            #send:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            }
+            
+            #send:active {
+                transform: translateY(0);
+            }
+            
+            .typing {
+                display: none;
+                padding: 10px 0;
+                font-style: italic;
+                color: #6c757d;
+                font-size: 13px;
+            }
+            
+            .typing.show {
+                display: block;
+            }
+            
+            .org-badge {
+                display: inline-block;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: white;
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+                margin-left: 8px;
+            }
+            
+            /* Custom scrollbar */
+            #chat::-webkit-scrollbar {
+                width: 6px;
+            }
+            
+            #chat::-webkit-scrollbar-track {
+                background: #f1f1f1;
+            }
+            
+            #chat::-webkit-scrollbar-thumb {
+                background: #c1c1c1;
+                border-radius: 3px;
+            }
+            
+            #chat::-webkit-scrollbar-thumb:hover {
+                background: #a8a8a8;
+            }
         </style>
     </head>
     <body>
+        <div class="header">
+            <h1>FAQ Assistant</h1>
+            <p>Get instant answers to your frequently asked questions</p>
+        </div>
+
         <div id="chat-container">
-            <div id="chat"></div>
+            <div class="controls">
+                <div class="org-selector">
+                    <label for="orgSelect">Organization:</label>
+                    <select id="orgSelect">
+                        <option value="">-- Select Organization --</option>
+                        <option value="4">GroundWorks</option>
+                        <option value="5">Method</option>
+                        <option value="6">WL Development</option>
+                        <option value="7">PatientNow</option>
+                        <option value="8">JemHR</option>
+                        <option value="9">ToursByLocal</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div id="chat">
+                <div class="message bot">
+                    <div class="avatar">🤖</div>
+                    <div class="message-content">
+                        Hello! I'm your FAQ Assistant. Select an organization above and ask me any question. I'll search through the knowledge base to help you find answers.
+                    </div>
+                </div>
+            </div>
+            
+            <div class="typing">
+                <div class="message bot">
+                    <div class="avatar">🤖</div>
+                    <div class="message-content">Bot is typing...</div>
+                </div>
+            </div>
+            
             <div id="input-container">
-                <input type="text" id="query" placeholder="Ask a question..." />
+                <input type="text" id="query" placeholder="Type your question here..." />
                 <button id="send">Send</button>
             </div>
         </div>
@@ -256,49 +539,101 @@ async def chat_ui():
             const chatBox = document.getElementById("chat");
             const queryInput = document.getElementById("query");
             const sendButton = document.getElementById("send");
+            const orgSelect = document.getElementById("orgSelect");
+            const typingIndicator = document.querySelector(".typing");
 
-            function addMessage(text, sender) {
+            function addMessage(text, sender, showOrgBadge = false) {
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message " + sender;
-                msgDiv.textContent = text;
+                
+                const avatar = document.createElement("div");
+                avatar.className = "avatar";
+                avatar.textContent = sender === "user" ? "👤" : "🤖";
+                
+                const content = document.createElement("div");
+                content.className = "message-content";
+                
+                if (sender === "user" && showOrgBadge) {
+                    const orgValue = orgSelect.value;
+                    const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
+                    content.innerHTML = text + `<span class="org-badge">${orgText}</span>`;
+                } else {
+                    content.textContent = text;
+                }
+                
+                msgDiv.appendChild(avatar);
+                msgDiv.appendChild(content);
                 chatBox.appendChild(msgDiv);
                 chatBox.scrollTop = chatBox.scrollHeight;
+            }
+
+            function showTyping() {
+                typingIndicator.classList.add("show");
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
+
+            function hideTyping() {
+                typingIndicator.classList.remove("show");
             }
 
             async function sendQuery() {
                 const query = queryInput.value.trim();
                 if (!query) return;
 
-                addMessage("You: " + query, "user");
+                const selectedOrg = orgSelect.value;
+                const orgId = selectedOrg || null;
+
+                // Add user message with org badge
+                addMessage(query, "user", true);
                 queryInput.value = "";
+                
+                // Show typing indicator
+                showTyping();
 
                 try {
+                    const requestBody = {
+                        query: query,
+                        org_id: orgId
+                    };
+
                     const response = await fetch("/query", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ query: query, org_id: "default" })
+                        body: JSON.stringify(requestBody)
                     });
+                    
                     const data = await response.json();
+                    hideTyping();
+                    
                     if (data.answer) {
-                        addMessage("Bot: " + data.answer, "bot");
+                        addMessage(data.answer, "bot");
+                    } else if (data.detail) {
+                        addMessage("Error: " + data.detail, "bot");
                     } else {
-                        addMessage("Bot: (No response)", "bot");
+                        addMessage("I couldn't find an answer to your question. Please try rephrasing or contact support.", "bot");
                     }
                 } catch (err) {
-                    addMessage("Bot: Error connecting to server", "bot");
+                    hideTyping();
+                    addMessage("Sorry, I'm having trouble connecting right now. Please try again later.", "bot");
                 }
             }
 
             sendButton.addEventListener("click", sendQuery);
+            
             queryInput.addEventListener("keydown", function(e) {
-                if (e.key === "Enter") sendQuery();
+                if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendQuery();
+                }
             });
+
+            // Focus on input when page loads
+            queryInput.focus();
         </script>
     </body>
     </html>
     """
     return HTMLResponse(html_content)
-
 
 # --- Entry point ---
 if __name__ == "__main__":
