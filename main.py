@@ -622,46 +622,46 @@ async def chat_ui():
             const typingIndicator = document.querySelector(".typing");
 
             function parseMarkdown(text) {
-                // Convert markdown formatting to HTML
+                // Simple, cross-browser compatible markdown parser
                 let html = text
-                    // Escape HTML first
+                    // Escape HTML first for security
                     .replace(/&/g, '&amp;')
                     .replace(/</g, '&lt;')
                     .replace(/>/g, '&gt;')
                     
-                    // Bold text: **text** or ***text***
-                    .replace(/\*\*\*([^*]+)\*\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*\*([^*]+)\*\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                    // Bold text: ***text*** and **text** (do triple first to avoid conflicts)
+                    .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
                     
-                    // Italic text: *text* (but not when part of **)
-                    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                    // Italic text: *text* (only single asterisks, not part of **)
+                    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
                     
                     // Code blocks: `code`
-                    .replace(/`([^`]+)`/g, '<code>$1</code>')
+                    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
                     
-                    // Headers
+                    // Headers (must be at start of line)
                     .replace(/^#### (.+)$/gm, '<h5>$1</h5>')
                     .replace(/^### (.+)$/gm, '<h4>$1</h4>')
                     .replace(/^## (.+)$/gm, '<h3>$1</h3>')
                     .replace(/^# (.+)$/gm, '<h2>$1</h2>')
                     
                     // Bullet points: - item or * item
-                    .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
+                    .replace(/^\s*[-•]\s+(.+)$/gm, '<li>$1</li>')
                     
                     // Numbered lists: 1. item
                     .replace(/^\s*\d+\.\s+(.+)$/gm, '<li>$1</li>')
                     
-                    // Line breaks and paragraphs
+                    // Convert double line breaks to paragraph breaks
                     .replace(/\n\s*\n/g, '</p><p>')
+                    // Convert single line breaks to <br>
                     .replace(/\n/g, '<br>');
                 
                 // Wrap consecutive <li> elements in <ul>
-                html = html.replace(/(<li>.*?<\/li>)(?:\s*<li>.*?<\/li>)*/g, function(match) {
-                    return '<ul>' + match + '</ul>';
+                html = html.replace(/(<li>.*?<\/li>(?:\s*<br>\s*<li>.*?<\/li>)*)/g, function(match) {
+                    return '<ul>' + match.replace(/<br>\s*(?=<li>)/g, '') + '</ul>';
                 });
                 
-                // Wrap in paragraph if not already wrapped
+                // Add paragraph wrapper if needed
                 if (!html.includes('<p>') && !html.includes('<h') && !html.includes('<ul>')) {
                     html = '<p>' + html + '</p>';
                 }
@@ -743,12 +743,17 @@ async def chat_ui():
                         addMessage("I couldn't find an answer to your question. Please try rephrasing or contact support.", "bot");
                     }
                 } catch (err) {
+                    console.error("Error:", err);
                     hideTyping();
                     addMessage("Sorry, I'm having trouble connecting right now. Please try again later.", "bot");
                 }
             }
 
-            sendButton.addEventListener("click", sendQuery);
+            // Event listeners
+            sendButton.addEventListener("click", function(e) {
+                e.preventDefault();
+                sendQuery();
+            });
             
             queryInput.addEventListener("keydown", function(e) {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -758,7 +763,9 @@ async def chat_ui():
             });
 
             // Focus on input when page loads
-            queryInput.focus();
+            window.addEventListener('load', function() {
+                queryInput.focus();
+            });
         </script>
     </body>
     </html>
