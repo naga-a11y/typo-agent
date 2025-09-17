@@ -409,59 +409,6 @@ async def chat_ui():
                 border-bottom-left-radius: 6px;
             }
             
-            /* Markdown formatting styles */
-            .bot .message-content h2,
-            .bot .message-content h3,
-            .bot .message-content h4,
-            .bot .message-content h5 {
-                color: #495057;
-                margin: 12px 0 6px 0;
-                font-weight: 600;
-            }
-            
-            .bot .message-content h2 { font-size: 16px; }
-            .bot .message-content h3 { font-size: 15px; }
-            .bot .message-content h4 { font-size: 14px; }
-            .bot .message-content h5 { font-size: 13px; }
-            
-            .bot .message-content p {
-                margin: 6px 0;
-                line-height: 1.5;
-            }
-            
-            .bot .message-content strong {
-                color: #343a40;
-                font-weight: 600;
-            }
-            
-            .bot .message-content em {
-                font-style: italic;
-                color: #6c757d;
-            }
-            
-            .bot .message-content code {
-                background: #e9ecef !important;
-                color: #e83e8c !important;
-                padding: 2px 4px !important;
-                border-radius: 3px !important;
-                font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
-                font-size: 12px !important;
-            }
-            
-            .bot .message-content ul {
-                margin: 8px 0;
-                padding-left: 20px;
-            }
-            
-            .bot .message-content li {
-                margin: 4px 0;
-                line-height: 1.4;
-            }
-            
-            .bot .message-content br {
-                line-height: 1.6;
-            }
-            
             .avatar {
                 width: 32px;
                 height: 32px;
@@ -621,54 +568,6 @@ async def chat_ui():
             const orgSelect = document.getElementById("orgSelect");
             const typingIndicator = document.querySelector(".typing");
 
-            function parseMarkdown(text) {
-                // Simple, cross-browser compatible markdown parser
-                let html = text
-                    // Escape HTML first for security
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    
-                    // Bold text: ***text*** and **text** (do triple first to avoid conflicts)
-                    .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-                    
-                    // Italic text: *text* (only single asterisks, not part of **)
-                    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
-                    
-                    // Code blocks: `code`
-                    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-                    
-                    // Headers (must be at start of line)
-                    .replace(/^#### (.+)$/gm, '<h5>$1</h5>')
-                    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-                    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-                    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
-                    
-                    // Bullet points: - item or * item
-                    .replace(/^\s*[-•]\s+(.+)$/gm, '<li>$1</li>')
-                    
-                    // Numbered lists: 1. item
-                    .replace(/^\s*\d+\.\s+(.+)$/gm, '<li>$1</li>')
-                    
-                    // Convert double line breaks to paragraph breaks
-                    .replace(/\n\s*\n/g, '</p><p>')
-                    // Convert single line breaks to <br>
-                    .replace(/\n/g, '<br>');
-                
-                // Wrap consecutive <li> elements in <ul>
-                html = html.replace(/(<li>.*?<\/li>(?:\s*<br>\s*<li>.*?<\/li>)*)/g, function(match) {
-                    return '<ul>' + match.replace(/<br>\s*(?=<li>)/g, '') + '</ul>';
-                });
-                
-                // Add paragraph wrapper if needed
-                if (!html.includes('<p>') && !html.includes('<h') && !html.includes('<ul>')) {
-                    html = '<p>' + html + '</p>';
-                }
-                
-                return html;
-            }
-
             function addMessage(text, sender, showOrgBadge = false) {
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message " + sender;
@@ -684,9 +583,6 @@ async def chat_ui():
                     const orgValue = orgSelect.value;
                     const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
                     content.innerHTML = text + `<span class="org-badge">${orgText}</span>`;
-                } else if (sender === "bot") {
-                    // Parse markdown for bot responses
-                    content.innerHTML = parseMarkdown(text);
                 } else {
                     content.textContent = text;
                 }
@@ -743,17 +639,12 @@ async def chat_ui():
                         addMessage("I couldn't find an answer to your question. Please try rephrasing or contact support.", "bot");
                     }
                 } catch (err) {
-                    console.error("Error:", err);
                     hideTyping();
                     addMessage("Sorry, I'm having trouble connecting right now. Please try again later.", "bot");
                 }
             }
 
-            // Event listeners
-            sendButton.addEventListener("click", function(e) {
-                e.preventDefault();
-                sendQuery();
-            });
+            sendButton.addEventListener("click", sendQuery);
             
             queryInput.addEventListener("keydown", function(e) {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -763,9 +654,7 @@ async def chat_ui():
             });
 
             // Focus on input when page loads
-            window.addEventListener('load', function() {
-                queryInput.focus();
-            });
+            queryInput.focus();
         </script>
     </body>
     </html>
