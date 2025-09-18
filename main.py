@@ -1,8 +1,9 @@
 import os
 import warnings
 import logging
+import json
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, validator
 from vertexai import init
@@ -38,7 +39,7 @@ When queries relate to engineering management, delivery, or organizational effec
 - Keep answers short and precise; prioritize clarity over completeness  
 - Prioritize causality over correlation; call out confounders and seasonality  
 - Emphasize team-level patterns, systemic blockers, and long-term trends; avoid individual blame  
-- If signal is weak or data is missing, state uncertainty clearly and specify what’s needed  
+- If signal is weak or data is missing, state uncertainty clearly and specify what's needed  
 
 ## Organization Context
 When a user provides an organization ID, search in that organization's specific FAQ first:  
@@ -58,13 +59,13 @@ When a user provides an organization ID, search in that organization's specific 
 2. If no org_id is provided → search global FAQs directly.  
 
 ## Response Guidelines
-- Show only the **answer content**; never mention “databases,” “configs,” or technical details  
+- Show only the **answer content**; never mention "databases," "configs," or technical details  
 - Keep responses **concise, precise, and context-aware**  
 - If nothing relevant is found:  
-  - Do **not** say “I didn’t find anything”  
+  - Do **not** say "I didn't find anything"  
   - Instead, provide a short, helpful fallback (e.g., ask a clarifying question, or give a general engineering/delivery insight if relevant)  
-- For **out-of-scope queries** (like “what is today’s date?”): reply politely with  
-  `"Sorry, I don’t have info about that, but I can help you with engineering management, delivery, or organizational effectiveness."`  
+- For **out-of-scope queries** (like "what is today's date?"): reply politely with  
+  `"Sorry, I don't have info about that, but I can help you with engineering management, delivery, or organizational effectiveness."`  
 - If signal is weak: acknowledge uncertainty clearly and point out what more is needed  
 - Prefer verbs over adjectives. Example:  
   `"Because lead time p75 increased 28% post-release freeze, start X; expect p75 ↓ 10–15% in 2 sprints."`  
@@ -75,32 +76,29 @@ When a user provides an organization ID, search in that organization's specific 
 """
 
 # --- Request/Response Models ---
-from typing import Optional
-from pydantic import validator
-
 class QueryRequest(BaseModel):
     query: str
     org_id: Optional[str] = None
 
-    @validator('org_id', pre=True)
+    @validator("org_id", pre=True)
     def empty_string_to_none(cls, v):
-        if v == '' or v is None:
+        if v == "" or v is None:
             return None
         return v
 
 class QueryResponse(BaseModel):
     answer: str
     status: str = "success"
-    org_info: str = None  # Add org info for debugging
+    org_info: str = None
 
 # Organization mapping for reference
 ORG_MAPPING = {
     "4": "GroundWorks",
-    "5": "Method", 
+    "5": "Method",
     "6": "WL Development",
     "7": "PatientNow",
     "8": "JemHR",
-    "9": "ToursByLocal"
+    "9": "ToursByLocal",
 }
 
 # --- FastAPI app ---
@@ -116,18 +114,18 @@ initialization_lock = asyncio.Lock()
 async def initialize_components():
     """Initialize components with error handling"""
     global root_agent, runner, session_id
-    
+
     async with initialization_lock:
         if runner is not None:
             return runner
-            
+
         try:
             logger.info("Initializing Vertex AI...")
             init(project=const.PROJECT_ID, location="us-central1")
-            
+
             logger.info("Initializing toolbox...")
             toolbox = ToolboxSyncClient(const.TOOLBOX_URL)
-            
+
             logger.info("Creating LLM agent...")
             root_agent = LlmAgent(
                 name="FAQSemanticSearchAssistant",
@@ -135,19 +133,21 @@ async def initialize_components():
                 instruction=prompt,
                 tools=toolbox.load_toolset("cloudsql_faq_analysis_tools"),
             )
-            
+
             logger.info("Creating runner...")
-            runner = Runner(app_name="faq_app", agent=root_agent, session_service=session_service)
-            
+            runner = Runner(
+                app_name="faq_app", agent=root_agent, session_service=session_service
+            )
+
             # Create a persistent session
             session = await session_service.create_session(
                 state={}, app_name="faq_app", user_id="api_user"
             )
             session_id = session.id
-            
+
             logger.info("Initialization completed successfully")
             return runner
-            
+
         except Exception as e:
             logger.error(f"Initialization failed: {str(e)}")
             raise
@@ -161,34 +161,25 @@ async def startup_event():
         logger.info("Application startup completed")
     except Exception as e:
         logger.error(f"Startup failed: {str(e)}")
-        # Continue to allow health checks
 
 # --- Health endpoints ---
 @app.get("/")
 async def root():
     """Root endpoint with API info"""
     return {
-        "message": "FAQ Semantic Search API",
+        "message": "FAQ Semantic Search API with WebSocket Streaming",
         "version": "1.0.0",
         "status": "running",
         "initialized": runner is not None,
         "organizations": ORG_MAPPING,
         "endpoints": {
             "POST /query": "Submit FAQ query with JSON body",
-            "GET /query": "Submit FAQ query with query parameters",
+            "GET /query": "Submit FAQ query with query parameters", 
+            "WS /ws": "WebSocket streaming endpoint",
             "GET /chat": "Web-based chat interface",
             "GET /healthz": "Health check",
-            "GET /ready": "Readiness check"
+            "GET /ready": "Readiness check",
         },
-        "example_usage": {
-            "POST": {
-                "url": "/query",
-                "body": {"query": "How to reset password?", "org_id": "5"}
-            },
-            "GET": {
-                "url": "/query?query=How to reset password?&org_id=5"
-            }
-        }
     }
 
 @app.get("/healthz")
@@ -207,29 +198,140 @@ async def ready():
         logger.error(f"Readiness check failed: {str(e)}")
         return {"status": "not_ready", "message": str(e)}
 
-# --- FAQ Query endpoint ---
-@app.post("/query", response_model=QueryResponse)
-async def query_faq(request: QueryRequest):
-    """Query FAQ with semantic search"""
+# --- WebSocket endpoint for streaming ---
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for streaming responses"""
+    await websocket.accept()
+    logger.info("WebSocket connection established")
+    
     try:
         # Ensure system is initialized
         if runner is None:
+            await websocket.send_text(json.dumps({"type": "system", "content": "Initializing system..."}))
             await initialize_components()
-        
-        # Get organization info
+            await websocket.send_text(json.dumps({"type": "system", "content": "System ready!"}))
+
+        while True:
+            try:
+                # Receive message from client
+                data = await websocket.receive_text()
+                message_data = json.loads(data)
+                
+                query = message_data.get("query", "").strip()
+                org_id = message_data.get("org_id")
+                
+                if not query:
+                    continue
+                
+                # Convert empty string to None
+                if org_id == "":
+                    org_id = None
+                
+                # Get organization info
+                org_name = ORG_MAPPING.get(org_id, "No Organization") if org_id else "No Organization"
+                logger.info(f"WebSocket query: '{query}' for org_id: {org_id} ({org_name})")
+                
+                # Send acknowledgment
+                await websocket.send_text(json.dumps({
+                    "type": "ack", 
+                    "content": f"Searching{' in ' + org_name if org_id else ' in Global FAQ'}..."
+                }))
+                
+                # Create user message with context
+                if org_id:
+                    query_with_context = f"Organization ID: {org_id} (Organization: {org_name})\nUser Query: {query}"
+                else:
+                    query_with_context = f"No specific organization selected\nUser Query: {query}"
+                
+                user_content = types.Content(
+                    role="user", parts=[types.Part(text=query_with_context)]
+                )
+                run_config = RunConfig(streaming_mode=StreamingMode.SSE)
+                
+                # Run the query with streaming
+                result = runner.run_async(
+                    session_id=session_id,
+                    user_id="api_user",
+                    new_message=user_content,
+                    run_config=run_config,
+                )
+                
+                response_chunks = []
+                async for event in result:
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                # Send streaming chunk
+                                await websocket.send_text(json.dumps({
+                                    "type": "chunk",
+                                    "content": part.text
+                                }))
+                                response_chunks.append(part.text)
+                            elif hasattr(part, "function_call") and part.function_call:
+                                # Send function call notification
+                                await websocket.send_text(json.dumps({
+                                    "type": "function",
+                                    "content": f"🔍 Searching {part.function_call.name}..."
+                                }))
+                            elif hasattr(part, "function_response") and part.function_response:
+                                # Send function completion notification
+                                await websocket.send_text(json.dumps({
+                                    "type": "function",
+                                    "content": "✓ Search completed"
+                                }))
+                
+                # Send completion signal
+                full_response = " ".join(response_chunks)
+                if not full_response.strip():
+                    full_response = "I couldn't find relevant information for your query. Please try rephrasing your question."
+                
+                await websocket.send_text(json.dumps({
+                    "type": "complete",
+                    "content": full_response,
+                    "org_info": f"Searched in: {org_name}" if org_id else "Searched in: Global FAQ Database"
+                }))
+                
+                logger.info(f"WebSocket response completed: {full_response[:100]}...")
+                
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "content": "Invalid message format"
+                }))
+            except Exception as e:
+                logger.error(f"WebSocket query error: {str(e)}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "content": f"Query processing failed: {str(e)}"
+                }))
+                
+    except WebSocketDisconnect:
+        logger.info("WebSocket connection closed")
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+    finally:
+        logger.info("WebSocket connection terminated")
+
+# --- REST API endpoints (keep for backward compatibility) ---
+@app.post("/query", response_model=QueryResponse)
+async def query_faq(request: QueryRequest):
+    """Query FAQ with semantic search (REST API)"""
+    try:
+        if runner is None:
+            await initialize_components()
+
         org_name = ORG_MAPPING.get(request.org_id, "No Organization") if request.org_id else "No Organization"
-        logger.info(f"Received query: '{request.query}' for org_id: {request.org_id} ({org_name})")
-        
-        # Create user message with proper org_id context
+        logger.info(f"REST query: '{request.query}' for org_id: {request.org_id} ({org_name})")
+
         if request.org_id:
             query_with_context = f"Organization ID: {request.org_id} (Organization: {org_name})\nUser Query: {request.query}"
         else:
             query_with_context = f"No specific organization selected\nUser Query: {request.query}"
-            
+
         user_content = types.Content(role="user", parts=[types.Part(text=query_with_context)])
         run_config = RunConfig(streaming_mode=StreamingMode.NONE)
 
-        # Run the query
         result = runner.run_async(
             session_id=session_id,
             user_id="api_user",
@@ -237,7 +339,6 @@ async def query_faq(request: QueryRequest):
             run_config=run_config,
         )
 
-        # Extract the response
         response_text = ""
         async for event in result:
             if event.content and event.content.parts:
@@ -246,20 +347,17 @@ async def query_faq(request: QueryRequest):
                         response_text += part.text + " "
 
         if not response_text.strip():
-            response_text = "I couldn't find relevant information for your query. Please try rephrasing your question or check the documentation."
+            response_text = "I couldn't find relevant information for your query. Please try rephrasing your question."
 
-        logger.info(f"Generated response: {response_text[:100]}...")
-        
         return QueryResponse(
             answer=response_text.strip(),
-            org_info=f"Searched in: {org_name}" if request.org_id else "Searched in: Global FAQ Database"
+            org_info=f"Searched in: {org_name}" if request.org_id else "Searched in: Global FAQ Database",
         )
-        
+
     except Exception as e:
-        logger.error(f"Query failed: {str(e)}")
+        logger.error(f"REST query failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query processing failed: {str(e)}")
 
-# --- Simple GET endpoint for testing ---
 @app.get("/query")
 async def query_faq_get(query: str, org_id: str = None):
     """Simple GET endpoint for testing"""
@@ -268,12 +366,13 @@ async def query_faq_get(query: str, org_id: str = None):
 
 @app.get("/chat")
 async def chat_ui():
-    """Enhanced frontend chatbot UI with organization selection"""
+    """Enhanced frontend chatbot UI with WebSocket streaming"""
     html_content = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>FAQ Chatbot</title>
+        <title>FAQ Chatbot - Streaming</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body { 
@@ -320,6 +419,7 @@ async def chat_ui():
                 display: flex;
                 align-items: center;
                 gap: 15px;
+                flex-wrap: wrap;
             }
             
             .org-selector label {
@@ -337,12 +437,25 @@ async def chat_ui():
                 color: #495057;
                 cursor: pointer;
                 transition: border-color 0.2s;
+                min-width: 200px;
             }
             
             #orgSelect:focus {
                 outline: none;
                 border-color: #667eea;
             }
+            
+            .connection-status {
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+                margin-left: auto;
+            }
+            
+            .connected { background: #d4edda; color: #155724; }
+            .connecting { background: #fff3cd; color: #856404; }
+            .disconnected { background: #f8d7da; color: #721c24; }
             
             #chat { 
                 height: 450px; 
@@ -356,15 +469,16 @@ async def chat_ui():
                 display: flex;
                 align-items: flex-start;
                 gap: 10px;
+                animation: fadeIn 0.3s ease-in;
             }
             
-            .user { 
-                justify-content: flex-end;
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
-            .bot {
-                justify-content: flex-start;
-            }
+            .user { justify-content: flex-end; }
+            .bot { justify-content: flex-start; }
             
             .message-content {
                 max-width: 80%;
@@ -388,6 +502,20 @@ async def chat_ui():
                 border-bottom-left-radius: 6px;
             }
             
+            .system .message-content {
+                background: #e3f2fd;
+                color: #1565c0;
+                font-style: italic;
+                font-size: 13px;
+            }
+            
+            .function .message-content {
+                background: #f3e5f5;
+                color: #7b1fa2;
+                font-size: 12px;
+                font-style: italic;
+            }
+            
             .avatar {
                 width: 32px;
                 height: 32px;
@@ -406,9 +534,18 @@ async def chat_ui():
                 order: 1;
             }
             
-            .bot .avatar {
+            .bot .avatar, .system .avatar, .function .avatar {
                 background: #e9ecef;
                 color: #6c757d;
+            }
+            
+            .streaming {
+                border-right: 2px solid #667eea;
+                animation: blink 1s infinite;
+            }
+            
+            @keyframes blink {
+                50% { border-color: transparent; }
             }
             
             #input-container { 
@@ -445,25 +582,15 @@ async def chat_ui():
                 transition: transform 0.2s, box-shadow 0.2s;
             }
             
-            #send:hover {
+            #send:hover:not(:disabled) {
                 transform: translateY(-1px);
                 box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
             }
             
-            #send:active {
-                transform: translateY(0);
-            }
-            
-            .typing {
-                display: none;
-                padding: 10px 0;
-                font-style: italic;
-                color: #6c757d;
-                font-size: 13px;
-            }
-            
-            .typing.show {
-                display: block;
+            #send:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+                transform: none;
             }
             
             .org-badge {
@@ -475,6 +602,52 @@ async def chat_ui():
                 font-size: 11px;
                 font-weight: 600;
                 margin-left: 8px;
+            }
+            
+            /* Markdown formatting styles */
+            .bot .message-content h2, .bot .message-content h3, .bot .message-content h4, .bot .message-content h5 {
+                color: #495057;
+                margin: 12px 0 6px 0;
+                font-weight: 600;
+            }
+            
+            .bot .message-content h2 { font-size: 16px; }
+            .bot .message-content h3 { font-size: 15px; }
+            .bot .message-content h4 { font-size: 14px; }
+            .bot .message-content h5 { font-size: 13px; }
+            
+            .bot .message-content p {
+                margin: 6px 0;
+                line-height: 1.5;
+            }
+            
+            .bot .message-content strong {
+                color: #343a40;
+                font-weight: 600;
+            }
+            
+            .bot .message-content em {
+                font-style: italic;
+                color: #6c757d;
+            }
+            
+            .bot .message-content code {
+                background: #e9ecef;
+                color: #e83e8c;
+                padding: 2px 4px;
+                border-radius: 3px;
+                font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+                font-size: 12px;
+            }
+            
+            .bot .message-content ul {
+                margin: 8px 0;
+                padding-left: 20px;
+            }
+            
+            .bot .message-content li {
+                margin: 4px 0;
+                line-height: 1.4;
             }
             
             /* Custom scrollbar */
@@ -499,7 +672,7 @@ async def chat_ui():
     <body>
         <div class="header">
             <h1>FAQ Assistant</h1>
-            <p>Get instant answers to your frequently asked questions</p>
+            <p>Get instant answers with real-time streaming</p>
         </div>
 
         <div id="chat-container">
@@ -515,6 +688,7 @@ async def chat_ui():
                         <option value="8">JemHR</option>
                         <option value="9">ToursByLocal</option>
                     </select>
+                    <div id="connectionStatus" class="connection-status connecting">Connecting...</div>
                 </div>
             </div>
             
@@ -522,21 +696,14 @@ async def chat_ui():
                 <div class="message bot">
                     <div class="avatar">🤖</div>
                     <div class="message-content">
-                        Hello! I'm your FAQ Assistant. Select an organization above and ask me any question. I'll search through the knowledge base to help you find answers.
+                        Hello! I'm your FAQ Assistant with real-time streaming. Select an organization above and ask me any question. You'll see my responses appear as I generate them!
                     </div>
                 </div>
             </div>
             
-            <div class="typing">
-                <div class="message bot">
-                    <div class="avatar">🤖</div>
-                    <div class="message-content">Bot is typing...</div>
-                </div>
-            </div>
-            
             <div id="input-container">
-                <input type="text" id="query" placeholder="Type your question here..." />
-                <button id="send">Send</button>
+                <input type="text" id="query" placeholder="Type your question here..." disabled />
+                <button id="send" disabled>Send</button>
             </div>
         </div>
 
@@ -545,15 +712,82 @@ async def chat_ui():
             const queryInput = document.getElementById("query");
             const sendButton = document.getElementById("send");
             const orgSelect = document.getElementById("orgSelect");
-            const typingIndicator = document.querySelector(".typing");
+            const connectionStatus = document.getElementById("connectionStatus");
 
-            function addMessage(text, sender, showOrgBadge = false) {
+            let ws = null;
+            let currentStreamingMessage = null;
+            let isConnected = false;
+
+            function parseMarkdown(text) {
+                let html = text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\\*\\*\\*([^*\\n]+)\\*\\*\\*/g, '<strong>$1</strong>')
+                    .replace(/\\*\\*([^*\\n]+)\\*\\*/g, '<strong>$1</strong>')
+                    .replace(/\\*([^*\\n]+)\\*/g, '<em>$1</em>')
+                    .replace(/`([^`\\n]+)`/g, '<code>$1</code>')
+                    .replace(/^#### (.+)$/gm, '<h5>$1</h5>')
+                    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+                    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+                    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+                    .replace(/^\\s*[-•]\\s+(.+)$/gm, '<li>$1</li>')
+                    .replace(/^\\s*\\d+\\.\\s+(.+)$/gm, '<li>$1</li>')
+                    .replace(/\\n\\s*\\n/g, '</p><p>')
+                    .replace(/\\n/g, '<br>');
+                
+                html = html.replace(/(<li>.*?<\\/li>(?:\\s*<br>\\s*<li>.*?<\\/li>)*)/g, function(match) {
+                    return '<ul>' + match.replace(/<br>\\s*(?=<li>)/g, '') + '</ul>';
+                });
+                
+                if (!html.includes('<p>') && !html.includes('<h') && !html.includes('<ul>')) {
+                    html = '<p>' + html + '</p>';
+                }
+                
+                return html;
+            }
+
+            function updateConnectionStatus(status) {
+                connectionStatus.className = `connection-status ${status}`;
+                switch(status) {
+                    case 'connected':
+                        connectionStatus.textContent = 'Connected';
+                        queryInput.disabled = false;
+                        sendButton.disabled = false;
+                        break;
+                    case 'error':
+                        if (currentStreamingMessage) {
+                            currentStreamingMessage.classList.remove('streaming');
+                            currentStreamingMessage.innerHTML = `<span style="color: #dc3545;">${data.content}</span>`;
+                            currentStreamingMessage = null;
+                        } else {
+                            addMessage(data.content, 'bot', false, true);
+                        }
+                        sendButton.disabled = false;
+                        break;
+                }
+            }
+
+            function addMessage(text, sender, showOrgBadge = false, isError = false) {
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message " + sender;
                 
                 const avatar = document.createElement("div");
                 avatar.className = "avatar";
-                avatar.textContent = sender === "user" ? "👤" : "🤖";
+                
+                switch(sender) {
+                    case 'user':
+                        avatar.textContent = "👤";
+                        break;
+                    case 'system':
+                        avatar.textContent = "⚙️";
+                        break;
+                    case 'function':
+                        avatar.textContent = "🔍";
+                        break;
+                    default:
+                        avatar.textContent = "🤖";
+                }
                 
                 const content = document.createElement("div");
                 content.className = "message-content";
@@ -561,68 +795,75 @@ async def chat_ui():
                 if (sender === "user" && showOrgBadge) {
                     const orgValue = orgSelect.value;
                     const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
-                    content.innerHTML = text + `<span class="org-badge">${orgText}</span>`;
+                    content.innerHTML = `${text} <span class="org-badge">${orgText}</span>`;
+                } else if (sender === "bot" && !isError) {
+                    content.innerHTML = parseMarkdown(text);
                 } else {
                     content.textContent = text;
+                    if (isError) {
+                        content.style.color = '#dc3545';
+                    }
                 }
                 
                 msgDiv.appendChild(avatar);
                 msgDiv.appendChild(content);
                 chatBox.appendChild(msgDiv);
                 chatBox.scrollTop = chatBox.scrollHeight;
+                
+                return content;
             }
 
-            function showTyping() {
-                typingIndicator.classList.add("show");
+            function startStreamingMessage() {
+                const msgDiv = document.createElement("div");
+                msgDiv.className = "message bot";
+                
+                const avatar = document.createElement("div");
+                avatar.className = "avatar";
+                avatar.textContent = "🤖";
+                
+                const content = document.createElement("div");
+                content.className = "message-content streaming";
+                
+                msgDiv.appendChild(avatar);
+                msgDiv.appendChild(content);
+                chatBox.appendChild(msgDiv);
                 chatBox.scrollTop = chatBox.scrollHeight;
+                
+                return content;
             }
 
-            function hideTyping() {
-                typingIndicator.classList.remove("show");
-            }
-
-            async function sendQuery() {
+            function sendQuery() {
                 const query = queryInput.value.trim();
-                if (!query) return;
+                if (!query || !isConnected) return;
 
                 const selectedOrg = orgSelect.value;
-                const orgId = selectedOrg || null;  // Convert empty string to null
+                const orgId = selectedOrg || null;
 
-                // Add user message with org badge
+                // Add user message
                 addMessage(query, "user", true);
                 queryInput.value = "";
-                
-                // Show typing indicator
-                showTyping();
+                sendButton.disabled = true;
+
+                // Start streaming message
+                currentStreamingMessage = startStreamingMessage();
+
+                // Send via WebSocket
+                const message = {
+                    query: query,
+                    org_id: orgId
+                };
 
                 try {
-                    const requestBody = {
-                        query: query,
-                        org_id: orgId  // This will be null if no org selected
-                    };
-
-                    const response = await fetch("/query", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(requestBody)
-                    });
-                    
-                    const data = await response.json();
-                    hideTyping();
-                    
-                    if (data.answer) {
-                        addMessage(data.answer, "bot");
-                    } else if (data.detail) {
-                        addMessage("Error: " + data.detail, "bot");
-                    } else {
-                        addMessage("I couldn't find an answer to your question. Please try rephrasing or contact support.", "bot");
-                    }
-                } catch (err) {
-                    hideTyping();
-                    addMessage("Sorry, I'm having trouble connecting right now. Please try again later.", "bot");
+                    ws.send(JSON.stringify(message));
+                } catch (error) {
+                    console.error('Failed to send message:', error);
+                    addMessage("Failed to send message. Please check your connection.", "bot", false, true);
+                    sendButton.disabled = false;
+                    currentStreamingMessage = null;
                 }
             }
 
+            // Event listeners
             sendButton.addEventListener("click", sendQuery);
             
             queryInput.addEventListener("keydown", function(e) {
@@ -632,8 +873,8 @@ async def chat_ui():
                 }
             });
 
-            // Focus on input when page loads
-            queryInput.focus();
+            // Initialize WebSocket connection
+            connectWebSocket();
         </script>
     </body>
     </html>
@@ -644,4 +885,78 @@ async def chat_ui():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)d = false;
+                        isConnected = true;
+                        break;
+                    case 'connecting':
+                        connectionStatus.textContent = 'Connecting...';
+                        queryInput.disabled = true;
+                        sendButton.disabled = true;
+                        isConnected = false;
+                        break;
+                    case 'disconnected':
+                        connectionStatus.textContent = 'Disconnected';
+                        queryInput.disabled = true;
+                        sendButton.disabled = true;
+                        isConnected = false;
+                        break;
+                }
+            }
+
+            function connectWebSocket() {
+                updateConnectionStatus('connecting');
+                
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
+
+                ws.onopen = function() {
+                    console.log('WebSocket connected');
+                    updateConnectionStatus('connected');
+                    queryInput.focus();
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleWebSocketMessage(data);
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+
+                ws.onclose = function() {
+                    console.log('WebSocket disconnected');
+                    updateConnectionStatus('disconnected');
+                    setTimeout(connectWebSocket, 3000);
+                };
+
+                ws.onerror = function(error) {
+                    console.error('WebSocket error:', error);
+                    updateConnectionStatus('disconnected');
+                };
+            }
+
+            function handleWebSocketMessage(data) {
+                switch(data.type) {
+                    case 'system':
+                        addMessage(data.content, 'system');
+                        break;
+                    case 'ack':
+                        addMessage(data.content, 'system');
+                        break;
+                    case 'function':
+                        addMessage(data.content, 'function');
+                        break;
+                    case 'chunk':
+                        if (currentStreamingMessage) {
+                            currentStreamingMessage.innerHTML += data.content;
+                            chatBox.scrollTop = chatBox.scrollHeight;
+                        }
+                        break;
+                    case 'complete':
+                        if (currentStreamingMessage) {
+                            currentStreamingMessage.classList.remove('streaming');
+                            currentStreamingMessage.innerHTML = parseMarkdown(data.content);
+                            currentStreamingMessage = null;
+                        }
+                        sendButton.disable
