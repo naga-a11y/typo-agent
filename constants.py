@@ -26,3 +26,17 @@ ORG_ID = int(getenv("ORG_ID", "5"))
 DEFAULT_VERTEX_AI_MODEL_NAME = getenv(
     "DEFAULT_VERTEX_AI_MODEL_NAME", "gemini-2.5-flash"
 )
+
+# MySQL DATABASE CONFIGURATION
+MEMORY_DB_CONFIG = {
+    "DB_USER": getenv("DB_USER"),
+    "DB_PASSWORD": getenv("DB_PASSWORD"),
+    "HOST": getenv("HOST"),
+    "MEMORY_DB_NAME": getenv("MEMORY_DB_NAME"),
+}
+
+MEMORY_MYSQL_URL = (
+    f"mysql+pymysql://{MEMORY_DB_CONFIG['DB_USER']}:"
+    f"{MEMORY_DB_CONFIG["DB_PASSWORD"]}@"
+    f"{MEMORY_DB_CONFIG['HOST']}/{MEMORY_DB_CONFIG['MEMORY_DB_NAME']}"
+)
