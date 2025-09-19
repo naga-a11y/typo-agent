@@ -9,6 +9,7 @@ from vertexai import init
 from google.genai import types
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService
 from google.adk.runners import Runner
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from toolbox_core import ToolboxSyncClient
@@ -39,6 +40,7 @@ When queries relate to engineering management, delivery, or organizational effec
 - Prioritize causality over correlation; call out confounders and seasonality  
 - Emphasize team-level patterns, systemic blockers, and long-term trends; avoid individual blame  
 - If signal is weak or data is missing, state uncertainty clearly and specify what’s needed  
+- Maintain context and ensure responses are actionable and well-formatted.
 
 ## Organization Context
 When a user provides an organization ID, search in that organization's specific FAQ first:  
@@ -112,51 +114,58 @@ app = FastAPI(title="FAQ Semantic Search API", version="1.0.0")
 # --- Global variables ---
 root_agent = None
 runner = None
-session_service = InMemorySessionService()
 session_id = None
 initialization_lock = asyncio.Lock()
+session_service = DatabaseSessionService(db_url=const.MEMORY_MYSQL_URL)
+
+
+async def get_or_create_session(user_id: str, session_id: Optional[str] = None):
+    sessions = await session_service.list_sessions(app_name="faq_app", user_id=user_id)
+    for s in sessions.sessions:
+        if s.id == session_id:
+            logger.info(f"Using existing session {s.id}")
+            return s.id
+
+    # else create new
+    new_session = await session_service.create_session(
+        state={}, app_name="faq_app", user_id=user_id, session_id=session_id
+    )
+    return new_session.id
 
 
 async def initialize_components():
-    """Initialize components with error handling"""
     global root_agent, runner, session_id
 
     async with initialization_lock:
         if runner is not None:
             return runner
 
-        try:
-            logger.info("Initializing Vertex AI...")
-            init(project=const.PROJECT_ID, location="us-central1")
+        logger.info("Initializing Vertex AI...")
+        init(project=const.PROJECT_ID, location="us-central1")
 
-            logger.info("Initializing toolbox...")
-            toolbox = ToolboxSyncClient(const.TOOLBOX_URL)
+        logger.info("Initializing toolbox...")
+        toolbox = ToolboxSyncClient(const.TOOLBOX_URL)
 
-            logger.info("Creating LLM agent...")
-            root_agent = LlmAgent(
-                name="FAQSemanticSearchAssistant",
-                model=const.DEFAULT_VERTEX_AI_MODEL_NAME,
-                instruction=prompt,
-                tools=toolbox.load_toolset("cloudsql_faq_analysis_tools"),
-            )
+        logger.info("Creating LLM agent...")
+        root_agent = LlmAgent(
+            name="FAQSemanticSearchAssistant",
+            model=const.DEFAULT_VERTEX_AI_MODEL_NAME,
+            instruction=prompt,
+            tools=toolbox.load_toolset("cloudsql_faq_analysis_tools"),
+        )
 
-            logger.info("Creating runner...")
-            runner = Runner(
-                app_name="faq_app", agent=root_agent, session_service=session_service
-            )
+        logger.info("Creating runner with DatabaseSessionService...")
+        runner = Runner(
+            app_name="faq_app",
+            agent=root_agent,
+            session_service=session_service,  # persistent sessions
+        )
 
-            # Create a persistent session
-            session = await session_service.create_session(
-                state={}, app_name="faq_app", user_id="api_user"
-            )
-            session_id = session.id
+        # Create/reuse persistent session
+        session_id = await get_or_create_session(user_id="api_user")
 
-            logger.info("Initialization completed successfully")
-            return runner
-
-        except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            raise
+        logger.info("Initialization completed successfully")
+        return runner
 
 
 # --- Startup event ---
