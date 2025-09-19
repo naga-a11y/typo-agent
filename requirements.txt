@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 google-cloud-aiplatform
 google-genai
-google-adk
-toolbox-core
+google-adk>=0.4.0
+toolbox-core>=0.1.14
 vertexai
 pymysql
