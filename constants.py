@@ -35,8 +35,10 @@ MEMORY_DB_CONFIG = {
     "MEMORY_DB_NAME": getenv("MEMORY_DB_NAME"),
 }
 
+encoded_password = quote_plus(MEMORY_DB_CONFIG["DB_PASSWORD"])
+
 MEMORY_MYSQL_URL = (
     f"mysql+pymysql://{MEMORY_DB_CONFIG['DB_USER']}:"
-    f"{MEMORY_DB_CONFIG['DB_PASSWORD']}@"
+    f"{encoded_password}@"
     f"{MEMORY_DB_CONFIG['HOST']}/{MEMORY_DB_CONFIG['MEMORY_DB_NAME']}"
 )
