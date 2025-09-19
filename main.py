@@ -145,13 +145,14 @@ async def initialize_components():
 
         logger.info("Initializing toolbox...")
         toolbox = ToolboxSyncClient(const.TOOLBOX_URL)
+        faq_tools = toolbox.load_toolset("cloudsql_faq_analysis_tools")
 
         logger.info("Creating LLM agent...")
         root_agent = LlmAgent(
             name="FAQSemanticSearchAssistant",
             model=const.DEFAULT_VERTEX_AI_MODEL_NAME,
             instruction=prompt,
-            tools=toolbox.load_toolset("cloudsql_faq_analysis_tools"),
+            tools=faq_tools,
         )
 
         logger.info("Creating runner with DatabaseSessionService...")
