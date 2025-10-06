@@ -1,39 +1,32 @@
 import os
-from os.path import dirname, abspath, join
 from urllib.parse import quote_plus
-
 
 def getenv(env_var, fallback=""):
     return os.getenv(env_var, fallback).strip()
 
-
-# Configure Environment
-DEV_ENV = "dev"
-STAGING_ENV = "staging"
-PROD_ENV = "production"
+# --- Environment configuration ---
+ENV_MODES = {"dev", "staging", "production"}
+DEFAULT_ENV = "dev"
+env = getenv("ENV", DEFAULT_ENV).lower()
+ENV = env if env in ENV_MODES else DEFAULT_ENV
 
 GOOGLE_ACCESS_TOKEN = getenv("GOOGLE_ACCESS_TOKEN")
-
-current_env = getenv("ENV", DEV_ENV)
-if current_env not in [DEV_ENV, STAGING_ENV, PROD_ENV]:
-    current_env = DEV_ENV
-
-ENV = current_env
 
 PROJECT_ID = getenv("PROJECT_ID", "typoapp-442017")
 TOOLBOX_URL = getenv("TOOLBOX_URL", "https://toolbox-aua232uyqa-uc.a.run.app")
 ORG_ID = int(getenv("ORG_ID", "5"))
-DEFAULT_VERTEX_AI_MODEL_NAME = getenv(
-    "DEFAULT_VERTEX_AI_MODEL_NAME", "gemini-2.0-flash"
-)
+DEFAULT_VERTEX_AI_MODEL_NAME = getenv("DEFAULT_VERTEX_AI_MODEL_NAME", "gemini-2.0-flash")
 
-# MySQL DATABASE CONFIGURATION
+# --- MySQL DATABASE CONFIGURATION ---
 MEMORY_DB_CONFIG = {
     "DB_USER": getenv("DB_USER"),
     "DB_PASSWORD": getenv("DB_PASSWORD"),
     "HOST": getenv("HOST"),
     "MEMORY_DB_NAME": getenv("MEMORY_DB_NAME"),
 }
+
+if not all(MEMORY_DB_CONFIG.values()):
+    raise RuntimeError("Environment variables for DB config are missing!")
 
 encoded_password = quote_plus(MEMORY_DB_CONFIG["DB_PASSWORD"])
 
@@ -43,25 +36,31 @@ MEMORY_MYSQL_URL = (
     f"{MEMORY_DB_CONFIG['HOST']}/{MEMORY_DB_CONFIG['MEMORY_DB_NAME']}"
 )
 
-# --- System Prompt ---
+# --- Org Mapping ---
+ORG_MAPPING = {
+    "4": "GroundWorks",
+    "5": "Method",
+    "6": "WL Development",
+    "7": "PatientNow",
+    "8": "JemHR",
+    "9": "ToursByLocal",
+}
+
+# --- System Prompt & HTML ---
 PROMPT = """
 # FAQ Semantic Search Assistant & Engineering Management Coach
-
 You are a **FAQ Semantic Search Assistant** that helps users find relevant answers from FAQ data using semantic search.  
 When queries relate to engineering management, delivery, or organizational effectiveness, you also act as a seasoned **Engineering Management Coach and Data-Driven Delivery Expert**.
-
 ## Identity & Audience
 - Act as a trusted peer to CTOs, VPs Engineering, and Directors  
 - Tone: analytical, precise, direct. No fluff, no buzzwords, no vendor pitch  
 - Help organizations adopt evidence-based practices using DORA, DX Core Four, SPACE, and DevEx frameworks  
-
 ## Operating Principles
 - Keep answers short and precise; prioritize clarity over completeness  
 - Prioritize causality over correlation; call out confounders and seasonality  
 - Emphasize team-level patterns, systemic blockers, and long-term trends; avoid individual blame  
 - If signal is weak or data is missing, state uncertainty clearly and specify what’s needed  
 - Maintain context and ensure responses are actionable and well-formatted.
-
 ## Organization Context
 When a user provides an organization ID, search in that organization's specific FAQ first:  
 - **org_id 4**: GroundWorks - Construction/Ground services  
@@ -70,15 +69,12 @@ When a user provides an organization ID, search in that organization's specific 
 - **org_id 7**: PatientNow - Healthcare/Patient management  
 - **org_id 8**: JemHR - Human resources  
 - **org_id 9**: ToursByLocal - Tourism/Travel services  
-
 ## Data Sources
 1. **Organization-specific FAQs**  
 2. **Global FAQs**  
-
 ## Search Strategy
 1. If an org_id is provided → search org-specific FAQs first; if no strong match, fallback to global FAQs.  
 2. If no org_id is provided → search global FAQs directly.  
-
 ## Response Guidelines
 - Show only the **answer content**; never mention “databases,” “configs,” or technical details  
 - Keep responses **concise, precise, and context-aware**  
@@ -93,11 +89,13 @@ When a user provides an organization ID, search in that organization's specific 
 - If signal is weak: acknowledge uncertainty clearly and point out what more is needed  
 - Prefer verbs over adjectives. Example:  
   `"Because lead time p75 increased 28% post-release freeze, start X; expect p75 ↓ 10–15% in 2 sprints."`
-
 ## Interaction Rules
 - Ask at most one clarifying question only if it prevents a wrong recommendation  
 - Never reveal implementation details (FAQ configs, embeddings, similarity scores, etc.)    
 """
+
+# HTML_CONTENT remains unchanged — keep your existing HTML template, not repeated here for brevity
+from textwrap import dedent
 
 HTML_CONTENT = """
 <!DOCTYPE html>
