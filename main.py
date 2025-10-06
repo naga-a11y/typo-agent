@@ -185,16 +185,20 @@ async def websocket_chat(websocket: WebSocket):
             await websocket.send_json({"sender": "bot", "text": "", "type": "start"})
             # --- The critical streaming fix is here! ---
             try:
+                prev_text = ""
                 async for event in result_generator:
                     if event.content and event.content.parts:
                         for part in event.content.parts:
                             if hasattr(part, "text") and part.text:
-                                # Send ONLY the new chunk segment as it arrives
-                                await websocket.send_json({
-                                    "sender": "bot",
-                                    "text": part.text,   # Just the chunk received now
-                                    "type": "chunk"
-                                })
+                                # Calculate only the NEW fragment
+                                new_text = part.text[len(prev_text):]
+                                if new_text:  # Only send new content
+                                    await websocket.send_json({
+                                        "sender": "bot",
+                                        "text": new_text,
+                                        "type": "chunk"
+                                    })
+                                prev_text = part.text
                                 await asyncio.sleep(0)
             except Exception as stream_err:
                 logger.error(f"run_async streaming error: {stream_err}")
