@@ -1,11 +1,18 @@
-import os
-import warnings
 import logging
+import warnings
 import json
 from typing import Optional
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
+import asyncio
+
+from constants import (
+    PROJECT_ID, TOOLBOX_URL, ORG_MAPPING, DEFAULT_VERTEX_AI_MODEL_NAME,
+    MEMORY_MYSQL_URL, PROMPT, HTML_CONTENT
+)
+
 from vertexai import init
 from google.genai import types
 from google.adk.agents.llm_agent import LlmAgent
@@ -13,16 +20,12 @@ from google.adk.sessions import DatabaseSessionService
 from google.adk.runners import Runner
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from toolbox_core import ToolboxSyncClient
-import constants as const
-import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("faq_api")
 
-# --- Suppress noisy warnings ---
 warnings.filterwarnings("ignore", message=".*non-text parts in the response.*")
-
 
 # --- Request/Response Models ---
 class QueryRequest(BaseModel):
@@ -31,203 +34,175 @@ class QueryRequest(BaseModel):
 
     @validator("org_id", pre=True)
     def empty_string_to_none(cls, v):
-        if v == "" or v is None:
+        if not v:
             return None
+        org_set = set(ORG_MAPPING.keys())
+        if v and v not in org_set:
+            raise ValueError(f"Invalid org_id: {v}.")
         return v
-
 
 class QueryResponse(BaseModel):
     answer: str
     status: str = "success"
-    org_info: str = None
+    org_info: Optional[str] = None
 
+# --- Helper Functions ---
+def build_query_context(query: str, org_id: Optional[str]) -> str:
+    if org_id:
+        org_name = ORG_MAPPING.get(org_id, "No Organization")
+        return f"Organization ID: {org_id} ({org_name})\nUser Query: {query}"
+    return f"No specific organization selected\nUser Query: {query}"
 
-# Organization mapping for reference
-ORG_MAPPING = {
-    "4": "GroundWorks",
-    "5": "Method",
-    "6": "WL Development",
-    "7": "PatientNow",
-    "8": "JemHR",
-    "9": "ToursByLocal",
-}
+def format_log_context(**kwargs):
+    return " | ".join(f"{k}={v!r}" for k, v in kwargs.items())
 
 # --- FastAPI app ---
-app = FastAPI(title="FAQ Semantic Search API", version="1.0.0")
+app = FastAPI(title="FAQ Semantic Search API", version="1.0.1")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Restrict as needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Global variables ---
 root_agent = None
 runner = None
 initialization_lock = asyncio.Lock()
-# Use a persistent session service for production
-session_service = DatabaseSessionService(db_url=const.MEMORY_MYSQL_URL)
-
+session_service = DatabaseSessionService(db_url=MEMORY_MYSQL_URL)
 
 async def get_or_create_session(user_id: str, session_id: Optional[str] = None):
-    """Finds an existing session or creates a new one for a given user."""
+    """Finds or creates a session for a user."""
     sessions = await session_service.list_sessions(app_name="faq_app", user_id=user_id)
     for s in sessions.sessions:
-        if s.id == session_id:
+        if session_id and s.id == session_id:
             logger.info(f"Using existing session {s.id} for user {user_id}")
             return s.id
-
-    logger.info(f"Creating a new session for user {user_id}")
     new_session = await session_service.create_session(
         state={}, app_name="faq_app", user_id=user_id
     )
+    logger.info(f"Created session {new_session.id} for user {user_id}")
     return new_session.id
 
-
 async def initialize_components():
-    """Initializes the AI components (agent, runner) only once."""
+    """Initializes the AI components (agent, runner); run once only."""
     global root_agent, runner
     async with initialization_lock:
         if runner is not None:
             return
-
-        logger.info("Initializing Vertex AI...")
-        init(project=const.PROJECT_ID, location="us-central1")
-
-        logger.info("Initializing toolbox...")
-        toolbox = ToolboxSyncClient(const.TOOLBOX_URL)
+        logger.info("Initializing Vertex AI for FAQ API...")
+        init(project=PROJECT_ID, location="us-central1")
+        toolbox = ToolboxSyncClient(TOOLBOX_URL)
         faq_tools = toolbox.load_toolset("cloudsql_faq_analysis_tools")
-
-        logger.info("Creating LLM agent...")
         root_agent = LlmAgent(
             name="FAQSemanticSearchAssistant",
-            model=const.DEFAULT_VERTEX_AI_MODEL_NAME,
-            instruction=const.PROMPT,
+            model=DEFAULT_VERTEX_AI_MODEL_NAME,
+            instruction=PROMPT,
             tools=faq_tools,
         )
-
-        logger.info("Creating runner with DatabaseSessionService...")
         runner = Runner(
             app_name="faq_app",
             agent=root_agent,
             session_service=session_service,
         )
-        logger.info("Initialization completed successfully")
+        logger.info("Runner and components initialized successfully")
 
+# --- Exception/HTTP Handling ---
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc} | path={request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. Please try again later."},
+    )
 
-# --- Startup event ---
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    logger.warning(f"HTTPException: {exc.detail} | path={request.url.path}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+# --- Event Hooks ---
 @app.on_event("startup")
-async def startup_event():
-    """Initialize components at startup"""
+async def on_startup():
     try:
         await initialize_components()
-        logger.info("Application startup completed")
+        logger.info("Application startup complete.")
     except Exception as e:
-        logger.error(f"Startup failed: {str(e)}", exc_info=True)
+        logger.critical(f"Startup failed: {e}", exc_info=True)
+        raise
 
-
-# --- Health and Info Endpoints ---
+# --- Endpoints ---
 @app.get("/")
 async def root():
     """Root endpoint with API info"""
     return {"message": "FAQ Semantic Search API is running."}
-
 
 @app.get("/healthz")
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "initialized": runner is not None}
 
-
-# --- FAQ Query endpoint (POST) ---
 @app.post("/query", response_model=QueryResponse)
 async def query_faq(request: QueryRequest):
-    """Query FAQ with semantic search. Creates a new session for every query."""
+    """Query FAQ with semantic search. Creates/uses session per query."""
     try:
-        if runner is None:
+        if not runner:
             raise HTTPException(status_code=503, detail="Service not initialized")
-
         request_user_id = f"api_user_{request.org_id or 'global'}"
         request_session_id = await get_or_create_session(user_id=request_user_id)
-
         org_name = ORG_MAPPING.get(request.org_id, "No Organization")
-        query_with_context = (
-            f"Organization ID: {request.org_id} (Organization: {org_name})\nUser Query: {request.query}"
-            if request.org_id
-            else f"No specific organization selected\nUser Query: {request.query}"
-        )
-
-        user_content = types.Content(
-            role="user", parts=[types.Part(text=query_with_context)]
-        )
+        query_with_context = build_query_context(request.query, request.org_id)
+        user_content = types.Content(role="user", parts=[types.Part(text=query_with_context)])
         run_config = RunConfig(streaming_mode=StreamingMode.NONE)
-
-        # CORRECTED: The 'await' is removed from here.
         result = runner.run_async(
             session_id=request_session_id,
             user_id=request_user_id,
             new_message=user_content,
             run_config=run_config,
         )
-
         response_text = ""
         async for event in result:
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if hasattr(part, "text") and part.text:
                         response_text += part.text
-
         if not response_text.strip():
-            response_text = "I couldn't find relevant information for your query."
-
+            response_text = "Would you like to clarify your question? I can help with engineering management, delivery, or team effectiveness."
         return QueryResponse(
             answer=response_text.strip(),
-            org_info=(
-                f"Searched in: {org_name}"
-                if request.org_id
-                else "Searched in: Global FAQ Database"
-            ),
+            org_info=f"Searched in: {org_name}" if request.org_id else "Searched in: Global FAQ Database"
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Query failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Query processing failed: {str(e)}"
-        )
+        logger.error(f"Query failed: {e} | {format_log_context(org_id=request.org_id, user_id=request_user_id)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Query processing failed.")
 
-
-# --- Chat UI and WebSocket Endpoint ---
 @app.get("/chat")
 async def chat_ui():
     """Serves the frontend chatbot UI"""
-    return HTMLResponse(const.HTML_CONTENT)
-
+    return HTMLResponse(HTML_CONTENT)
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """Handles stateful, streaming chat conversations over WebSocket."""
     await websocket.accept()
-
     user_id = f"ws_client_{websocket.client.host}:{websocket.client.port}"
     connection_session_id = await get_or_create_session(user_id=user_id)
-    logger.info(f"WebSocket connected. Using session_id: {connection_session_id}")
-
+    logger.info(f"WebSocket connected. Session: {connection_session_id}")
     try:
         while True:
             data = await websocket.receive_json()
             query = data.get("query")
             if not query:
                 continue
-
             org_id = data.get("org_id")
-            org_name = ORG_MAPPING.get(org_id, "Global FAQ")
-
-            # Send acknowledgment that we're processing
-            await websocket.send_json({"sender": "bot", "text": "", "type": "start"})
-
-            query_with_context = (
-                f"Organization ID: {org_id} ({org_name})\nUser Query: {query}"
-                if org_id
-                else f"No specific organization selected\nUser Query: {query}"
-            )
-            user_content = types.Content(
-                role="user", parts=[types.Part(text=query_with_context)]
-            )
+            query_with_context = build_query_context(query, org_id)
+            user_content = types.Content(role="user", parts=[types.Part(text=query_with_context)])
             run_config = RunConfig(streaming_mode=StreamingMode.SSE)
-
             result_generator = runner.run_async(
                 session_id=connection_session_id,
                 user_id=user_id,
@@ -235,27 +210,23 @@ async def websocket_chat(websocket: WebSocket):
                 run_config=run_config,
             )
 
-            # Stream each chunk immediately as it arrives
-            async for event in result_generator:
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            # Send each chunk immediately
-                            await websocket.send_json(
-                                {"sender": "bot", "text": part.text, "type": "chunk"}
-                            )
-                            # Small delay to ensure message is sent
-                            await asyncio.sleep(0)
-
-            # Signal completion
+            await websocket.send_json({"sender": "bot", "text": "", "type": "start"})
+            try:
+                async for event in result_generator:
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                await websocket.send_json({"sender": "bot", "text": part.text, "type": "chunk"})
+                                await asyncio.sleep(0)
+            except Exception as stream_err:
+                logger.error(f"run_async streaming error: {stream_err}")
+                await websocket.send_json({"sender": "bot", "text": "Sorry, an error occurred while generating a response.", "type": "chunk"})
             await websocket.send_json({"sender": "bot", "type": "end"})
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session: {connection_session_id}")
     except Exception as e:
-        logger.error(
-            f"WebSocket error in session {connection_session_id}: {e}", exc_info=True
-        )
+        logger.error(f"WebSocket error {e} | session={connection_session_id}", exc_info=True)
     finally:
-        if websocket.client_state.CONNECTED:
+        if websocket.application_state.value > 0:  # Is CONNECTED or MIGRATING
             await websocket.close()
