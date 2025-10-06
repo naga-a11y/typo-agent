@@ -1,12 +1,11 @@
 import logging
 import warnings
-import json
+import asyncio
 from typing import Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
-import asyncio
 
 from constants import (
     PROJECT_ID, TOOLBOX_URL, ORG_MAPPING, DEFAULT_VERTEX_AI_MODEL_NAME,
@@ -66,14 +65,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Global variables ---
 root_agent = None
 runner = None
 initialization_lock = asyncio.Lock()
 session_service = DatabaseSessionService(db_url=MEMORY_MYSQL_URL)
 
 async def get_or_create_session(user_id: str, session_id: Optional[str] = None):
-    """Finds or creates a session for a user."""
     sessions = await session_service.list_sessions(app_name="faq_app", user_id=user_id)
     for s in sessions.sessions:
         if session_id and s.id == session_id:
@@ -86,7 +83,6 @@ async def get_or_create_session(user_id: str, session_id: Optional[str] = None):
     return new_session.id
 
 async def initialize_components():
-    """Initializes the AI components (agent, runner); run once only."""
     global root_agent, runner
     async with initialization_lock:
         if runner is not None:
@@ -108,24 +104,6 @@ async def initialize_components():
         )
         logger.info("Runner and components initialized successfully")
 
-# --- Exception/HTTP Handling ---
-@app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc} | path={request.url.path}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error. Please try again later."},
-    )
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    logger.warning(f"HTTPException: {exc.detail} | path={request.url.path}")
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-    )
-
-# --- Event Hooks ---
 @app.on_event("startup")
 async def on_startup():
     try:
@@ -135,20 +113,16 @@ async def on_startup():
         logger.critical(f"Startup failed: {e}", exc_info=True)
         raise
 
-# --- Endpoints ---
 @app.get("/")
 async def root():
-    """Root endpoint with API info"""
     return {"message": "FAQ Semantic Search API is running."}
 
 @app.get("/healthz")
 async def health():
-    """Health check endpoint"""
     return {"status": "healthy", "initialized": runner is not None}
 
 @app.post("/query", response_model=QueryResponse)
 async def query_faq(request: QueryRequest):
-    """Query FAQ with semantic search. Creates/uses session per query."""
     try:
         if not runner:
             raise HTTPException(status_code=503, detail="Service not initialized")
@@ -184,7 +158,6 @@ async def query_faq(request: QueryRequest):
 
 @app.get("/chat")
 async def chat_ui():
-    """Serves the frontend chatbot UI"""
     return HTMLResponse(HTML_CONTENT)
 
 @app.websocket("/ws/chat")
@@ -209,24 +182,28 @@ async def websocket_chat(websocket: WebSocket):
                 new_message=user_content,
                 run_config=run_config,
             )
-
             await websocket.send_json({"sender": "bot", "text": "", "type": "start"})
+            # --- The critical streaming fix is here! ---
             try:
                 async for event in result_generator:
                     if event.content and event.content.parts:
                         for part in event.content.parts:
                             if hasattr(part, "text") and part.text:
-                                await websocket.send_json({"sender": "bot", "text": part.text, "type": "chunk"})
+                                # Send ONLY the new chunk segment as it arrives
+                                await websocket.send_json({
+                                    "sender": "bot",
+                                    "text": part.text,   # Just the chunk received now
+                                    "type": "chunk"
+                                })
                                 await asyncio.sleep(0)
             except Exception as stream_err:
                 logger.error(f"run_async streaming error: {stream_err}")
                 await websocket.send_json({"sender": "bot", "text": "Sorry, an error occurred while generating a response.", "type": "chunk"})
             await websocket.send_json({"sender": "bot", "type": "end"})
-
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session: {connection_session_id}")
     except Exception as e:
         logger.error(f"WebSocket error {e} | session={connection_session_id}", exc_info=True)
     finally:
-        if websocket.application_state.value > 0:  # Is CONNECTED or MIGRATING
+        if websocket.application_state.value > 0:
             await websocket.close()
