@@ -94,6 +94,7 @@ When a user provides an organization ID, search in that organization's specific 
 - Never reveal implementation details (FAQ configs, embeddings, similarity scores, etc.)    
 """
 
+
 # HTML_CONTENT remains unchanged — keep your existing HTML template, not repeated here for brevity
 from textwrap import dedent
 
@@ -329,7 +330,6 @@ HTML_CONTENT = """
         <h1>FAQ Assistant</h1>
         <p>Get instant answers to your frequently asked questions</p>
     </div>
-
     <div id="chat-container">
         <div class="controls">
             <div class="org-selector">
@@ -345,7 +345,6 @@ HTML_CONTENT = """
                 </select>
             </div>
         </div>
-        
         <div id="chat">
             <div class="message bot">
                 <div class="avatar">🤖</div>
@@ -354,153 +353,123 @@ HTML_CONTENT = """
                 </div>
             </div>
         </div>
-        
         <div class="typing">🤖 Bot is typing...</div>
-        
         <div id="input-container">
             <input type="text" id="query" placeholder="Type your question here..." />
             <button id="send">Send</button>
         </div>
     </div>
 
-    <script>
-        const chatBox = document.getElementById("chat");
-        const queryInput = document.getElementById("query");
-        const sendButton = document.getElementById("send");
-        const orgSelect = document.getElementById("orgSelect");
-        const typingIndicator = document.querySelector(".typing");
+<script>
+const chatBox = document.getElementById("chat");
+const queryInput = document.getElementById("query");
+const sendButton = document.getElementById("send");
+const orgSelect = document.getElementById("orgSelect");
+const typingIndicator = document.querySelector(".typing");
 
-        let socket;
-        let botMessageDiv = null;
+let socket;
+let botMessageDiv = null;  // The current bot message being streamed
 
-        function connectWebSocket() {
-            const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-            socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/chat`);
-
-            socket.onopen = () => {
-                console.log("✅ Connected to WebSocket");
-            };
-
-            socket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.sender === "bot") {
-                    // Handle start of new message
-                    if (data.type === "start") {
-                        hideTyping();
-                        botMessageDiv = createMessageBubble("bot");
-                        botMessageDiv.querySelector('.message-content').textContent = "";
-                        chatBox.scrollTop = chatBox.scrollHeight;
-                        return;
-                    }
-
-                    // Handle end of message stream
-                    if (data.type === "end") {
-                        botMessageDiv = null;
-                        return;
-                    }
-
-                    // Handle streaming chunks
-                    if (data.type === "chunk") {
-                        // If bubble doesn't exist yet, create it immediately
-                        if (botMessageDiv === null) {
-                            botMessageDiv = createMessageBubble("bot");
-                            botMessageDiv.querySelector('.message-content').textContent = "";
-                        }
-                        
-                        const contentElement = botMessageDiv.querySelector('.message-content');
-                        
-                        // Simply replace with the incoming text (which should be cumulative)
-                        contentElement.textContent = data.text;
-                        
-                        chatBox.scrollTop = chatBox.scrollHeight;
-                        return;
-                    }
-
-                    // Fallback
-                    if (botMessageDiv === null) {
-                        botMessageDiv = createMessageBubble("bot");
-                    }
-                    botMessageDiv.querySelector('.message-content').textContent = data.text;
-                    chatBox.scrollTop = chatBox.scrollHeight;
-                }
-            };
-
-            socket.onclose = () => {
-                console.log("❌ WebSocket closed, attempting to reconnect...");
+function connectWebSocket() {
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/chat`);
+    socket.onopen = () => {
+        console.log("✅ Connected to WebSocket");
+    };
+    socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.sender === "bot") {
+            if (data.type === "start") {
                 hideTyping();
-                setTimeout(connectWebSocket, 3000);
-            };
-            
-            socket.onerror = (error) => {
-                console.error("WebSocket Error:", error);
-                socket.close();
-            };
-        }
-        
-        function createMessageBubble(sender) {
-            const msgDiv = document.createElement("div");
-            msgDiv.className = "message " + sender;
-
-            const avatar = document.createElement("div");
-            avatar.className = "avatar";
-            avatar.textContent = sender === "user" ? "👤" : "🤖";
-
-            const content = document.createElement("div");
-            content.className = "message-content";
-            
-            msgDiv.appendChild(avatar);
-            msgDiv.appendChild(content);
-            chatBox.appendChild(msgDiv);
-            return msgDiv;
-        }
-
-        function addUserMessage(text) {
-            const msgDiv = createMessageBubble("user");
-            const content = msgDiv.querySelector('.message-content');
-            
-            const orgValue = orgSelect.value;
-            const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
-            content.innerHTML = text + ` <span class="org-badge">${orgText}</span>`;
-            
-            chatBox.scrollTop = chatBox.scrollHeight;
-        }
-
-        function showTyping() {
-            typingIndicator.classList.add("show");
-            chatBox.scrollTop = chatBox.scrollHeight;
-        }
-
-        function hideTyping() {
-            typingIndicator.classList.remove("show");
-        }
-
-        function sendQuery() {
-            const query = queryInput.value.trim();
-            if (!query || !socket || socket.readyState !== WebSocket.OPEN) return;
-
-            const orgId = orgSelect.value || null;
-
-            addUserMessage(query);
-            queryInput.value = "";
-            showTyping();
-
-            socket.send(JSON.stringify({ query: query, org_id: orgId }));
-        }
-
-        sendButton.addEventListener("click", sendQuery);
-        queryInput.addEventListener("keydown", function(e) {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendQuery();
+                botMessageDiv = createMessageBubble("bot");
+                botMessageDiv.querySelector('.message-content').textContent = ""; // Clear content
+                chatBox.scrollTop = chatBox.scrollHeight;
+                return;
             }
-        });
+            if (data.type === "chunk") {
+                // APPEND the streamed chunk, NOT replace
+                if (!botMessageDiv) {
+                    botMessageDiv = createMessageBubble("bot");
+                }
+                const contentElement = botMessageDiv.querySelector('.message-content');
+                contentElement.textContent += data.text;  // <<--- APPEND chunks
+                chatBox.scrollTop = chatBox.scrollHeight;
+                return;
+            }
+            if (data.type === "end") {
+                botMessageDiv = null;  // Ready for the next message
+                return;
+            }
+            // Fallback to add whatever bot message comes in
+            if (!botMessageDiv) botMessageDiv = createMessageBubble("bot");
+            botMessageDiv.querySelector('.message-content').textContent = data.text;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    };
+    socket.onclose = () => {
+        console.log("❌ WebSocket closed, attempting to reconnect...");
+        hideTyping();
+        setTimeout(connectWebSocket, 3000);
+    };
+    socket.onerror = (error) => {
+        console.error("WebSocket Error:", error);
+        socket.close();
+    };
+}
 
-        // Focus on input when page loads
-        queryInput.focus();
-        
-        // Connect WebSocket on page load
-        connectWebSocket();
-    </script>
+function createMessageBubble(sender) {
+    const msgDiv = document.createElement("div");
+    msgDiv.className = "message " + sender;
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = sender === "user" ? "👤" : "🤖";
+    const content = document.createElement("div");
+    content.className = "message-content";
+    msgDiv.appendChild(avatar);
+    msgDiv.appendChild(content);
+    chatBox.appendChild(msgDiv);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return msgDiv;
+}
+
+function addUserMessage(text) {
+    const msgDiv = createMessageBubble("user");
+    const content = msgDiv.querySelector('.message-content');
+    const orgValue = orgSelect.value;
+    const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
+    content.innerHTML = text + ` <span class="org-badge">${orgText}</span>`;
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function showTyping() {
+    typingIndicator.classList.add("show");
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function hideTyping() {
+    typingIndicator.classList.remove("show");
+}
+
+function sendQuery() {
+    const query = queryInput.value.trim();
+    if (!query || !socket || socket.readyState !== WebSocket.OPEN) return;
+    const orgId = orgSelect.value || null;
+    addUserMessage(query);
+    queryInput.value = "";
+    showTyping();
+    socket.send(JSON.stringify({ query: query, org_id: orgId }));
+}
+
+sendButton.addEventListener("click", sendQuery);
+queryInput.addEventListener("keydown", function(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendQuery();
+    }
+});
+queryInput.focus();
+connectWebSocket();
+</script>
 </body>
 </html>
 """
