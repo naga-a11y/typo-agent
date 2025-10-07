@@ -1,0 +1,357 @@
+############################################################
+# 🧠 Typo Agent + FAQ Unified CloudSQL Toolbox
+# Combines GitHub/Org Insights + FAQ Semantic Search Tools
+############################################################
+
+sources:
+  # === Typo Agent Insights Database ===
+  my-cloudsql-typo-agent-source:
+    kind: cloud-sql-mysql
+    project: typoapp-442017
+    region: us-central1
+    instance: typo-sql
+    ipType: public
+    database: typo_org
+    user: typo-user
+    password: Typo@1234
+
+  # === FAQ Semantic Search Database (same instance) ===
+  my-cloudsql-faq-source:
+    kind: cloud-sql-mysql
+    project: typoapp-442017
+    region: us-central1
+    instance: typo-sql
+    ipType: public
+    database: typo_org
+    user: typo-user
+    password: Typo@1234
+
+############################################################
+# 🧩 TOOLS
+############################################################
+
+tools:
+  # === 1. Typo Agent SQL Executor ===
+  execute_typo_agent_sql_query:
+    kind: mysql-execute-sql
+    source: my-cloudsql-typo-agent-source
+    description: |
+      Executes a SQL query against the Typo Agent CloudSQL MySQL database.
+
+      Use this to answer questions about users, organizations, teams, memberships, and integrations.
+
+      **Available Tables & Schemas:**
+
+      ### **users**
+      *Core user accounts and attributes*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | CHAR(24) PK | User ID |
+      | login | VARCHAR(255) | GitHub login |
+      | external_id | VARCHAR(255) | External reference |
+      | node_id | VARCHAR(255) | GitHub node ID |
+      | avatar_url | TEXT | Avatar URL |
+      | name | VARCHAR(255) | Full name |
+      | type | VARCHAR(100) | User type |
+      | site_admin | BOOLEAN | Is site admin |
+      | email | VARCHAR(255) | Primary email |
+      | token | TEXT | Access token |
+      | role | VARCHAR(100) | Role |
+      | slack_id | VARCHAR(255) | Slack ID |
+      | azure_id | VARCHAR(255) | Azure ID |
+      | jira_account_id | VARCHAR(255) | JIRA account ID |
+      | jira_account_id_zoho | VARCHAR(255) | Zoho JIRA account ID |
+      | is_dashboard_user | BOOLEAN | Dashboard access flag |
+      | default_team_id | CHAR(24) | Default team |
+      | default_organization_id | CHAR(24) | Default organization |
+      | is_admin | BOOLEAN | Is admin |
+      | is_active | BOOLEAN | Is active |
+      | huddle_up_id | INT | HuddleUp reference |
+      | dashboard_role | VARCHAR(100) | Dashboard role |
+      | is_external_user | BOOLEAN | External user flag |
+      | reference | VARCHAR(255) | Reference field |
+      | user_manual_deleted | BOOLEAN | User manually deleted |
+      | use_previous_data | BOOLEAN | Use previous data |
+      | source | VARCHAR(100) | Source system |
+      | created_at | TIMESTAMP | Created timestamp |
+      | updated_at | TIMESTAMP | Updated timestamp |
+
+      ---
+
+      ### **user_organizations**
+      *User → Organization mapping*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | INT AI PK | Record ID |
+      | user_id | CHAR(24) | User ID |
+      | organization_id | CHAR(24) | Organization ID |
+      | created_at | TIMESTAMP | Created timestamp |
+
+      ---
+
+      ### **organizations**
+      *GitHub organizations and integrations*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | CHAR(24) PK | Organization ID |
+      | login | VARCHAR(255) | GitHub login |
+      | external_id | VARCHAR(255) | External reference |
+      | name | VARCHAR(255) | Organization name |
+      | node_id | VARCHAR(255) | GitHub node ID |
+      | avatar_url | TEXT | Avatar URL |
+      | installation_user_id | CHAR(24) | Installation user |
+      | url | TEXT | API URL |
+      | type | VARCHAR(100) | Type |
+      | html_url | TEXT | GitHub page URL |
+      | github_installation_id | CHAR(24) | GitHub installation ID |
+      | jira_installation_id | CHAR(24) | JIRA integration ID |
+      | slack_installation_id | CHAR(24) | Slack integration ID |
+      | cicd_installation_id | CHAR(24) | CI/CD integration ID |
+      | incident_installation_id | CHAR(24) | Incident mgmt integration ID |
+      | jira_cloud_id | VARCHAR(255) | JIRA cloud ID |
+      | repos_url | TEXT | Repos URL |
+      | site_admin | BOOLEAN | Is site admin |
+      | git_onboarding_status | VARCHAR(50) | Onboarding status |
+      | to_be_synced | BOOLEAN | Pending sync |
+      | is_synced | BOOLEAN | Sync status |
+      | is_jira_configured | BOOLEAN | JIRA configured |
+      | is_onboarding_complete | BOOLEAN | Onboarding complete |
+      | are_categories_configured | BOOLEAN | Categories configured |
+      | repo_selection | VARCHAR(100) | Repo selection mode |
+      | uninstalled_at | TIMESTAMP | Uninstall timestamp |
+      | webhook_id | VARCHAR(255) | Webhook ID |
+      | has_error | BOOLEAN | Error flag |
+      | repo_webhook_configured | BOOLEAN | Repo webhook status |
+      | account_type | VARCHAR(100) | Account type |
+      | status | VARCHAR(50) | Status |
+      | created_at | TIMESTAMP | Created timestamp |
+      | updated_at | TIMESTAMP | Updated timestamp |
+
+      ---
+
+      ### **teams**
+      *Team definitions*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | CHAR(24) PK | Team ID |
+      | external_id | INT | External reference |
+      | node_id | VARCHAR(255) | GitHub node ID |
+      | name | VARCHAR(255) | Team name |
+      | slug | VARCHAR(255) | Slug |
+      | description | TEXT | Description |
+      | privacy | VARCHAR(50) | Privacy setting |
+      | members_url | TEXT | Members API URL |
+      | organization_id | CHAR(24) | Organization ID |
+      | is_active | BOOLEAN | Is active |
+      | last_synced | TIMESTAMP | Last synced |
+      | huddle_up_team_id | INT | HuddleUp reference |
+      | created_at | TIMESTAMP | Created timestamp |
+      | updated_at | TIMESTAMP | Updated timestamp |
+
+      ---
+
+      ### **team_members**
+      *Team → User mapping*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | INT AI PK | Record ID |
+      | team_id | CHAR(24) | Team ID |
+      | user_id | CHAR(24) | User ID |
+      | created_at | TIMESTAMP | Created timestamp |
+
+      ---
+
+      ### **team_managers**
+      *Team → Manager mapping*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | INT AI PK | Record ID |
+      | team_id | CHAR(24) | Team ID |
+      | user_id | CHAR(24) | Manager (User ID) |
+      | created_at | TIMESTAMP | Created timestamp |
+
+      ---
+
+      ### **daily_team_processed_snapshots**
+      *Daily team-level engineering metrics*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | CHAR(24) PK | Snapshot ID |
+      | organization_id | CHAR(24) | Organization ID |
+      | team_id | CHAR(24) | Team ID |
+      | efficiency | DECIMAL(10,2) | Efficiency score |
+      | date | DATE | Snapshot date |
+      | pr_cycle_time_in_progress_time | INT | PR in-progress time |
+      | pr_cycle_time_pickup_time | INT | PR pickup wait time |
+      | pr_cycle_time_review_time | INT | PR review time |
+      | pr_cycle_time_merge_time | INT | PR merge time |
+      | pr_cycle_time_cycle_time | INT | Total PR cycle time |
+      | pr_cycle_time_avg_cycle_time | INT | Avg PR cycle time |
+      | pr_cycle_time_pickup_pr | INT | Pickup PR count |
+      | pr_cycle_time_merge_pr | INT | Merged PR count |
+      | pr_cycle_time_in_progress_pr | INT | In-progress PR count |
+      | pr_cycle_time_review_pr | INT | Review PR count |
+      | pr_cycle_time_total_prs | INT | Total PRs |
+      | pr_avg_commits_total_commit_count | INT | Total commits |
+      | pr_avg_commits_pr_count | INT | PRs counted for commits |
+      | jira_quality_bugs_created | INT | Bugs created |
+      | jira_quality_bugs_resolved | INT | Bugs resolved |
+      | jira_quality_story_points_delivered | DECIMAL(10,2) | Story points delivered |
+      | jira_velocity_story_points_committed | DECIMAL(10,2) | Story points committed |
+      | jira_velocity_story_points_delivered | DECIMAL(10,2) | Story points delivered |
+      | jira_velocity_issues_committed | INT | Issues committed |
+      | jira_velocity_issues_delivered | INT | Issues delivered |
+      | merge_frequency_deployments_count | INT | Deployments count |
+      | merge_frequency_deployment_frequency | DECIMAL(10,2) | Deployment frequency |
+      | pr_merged_wo_review_percentage | DECIMAL(5,2) | % PRs merged w/o review |
+      | total_prs_created | INT | Total PRs created |
+      | pr_code_changes_additions | INT | Code additions |
+      | pr_code_changes_deletions | INT | Code deletions |
+      | issues_cycle_time_total | INT | Total issue cycle time |
+      | issues_resolved | INT | Issues resolved |
+      | failed_deployment | INT | Failed deployments |
+      | total_deployment | INT | Total deployments |
+      | burnout_value | VARCHAR(20) | Burnout status |
+      | burnout_last_notified_at | TIMESTAMP | Last burnout notification |
+      | code_review_issues_critical | INT | Critical review issues |
+      | code_review_issues_high | INT | High review issues |
+      | code_review_issues_medium | INT | Medium review issues |
+      | code_review_issues_low | INT | Low review issues |
+      | code_review_issues_info | INT | Informational review issues |
+      | created_at | TIMESTAMP | Created timestamp |
+      | updated_at | TIMESTAMP | Updated timestamp |
+
+      ---
+
+      ### **daily_processed_snapshots**
+      *Daily user-level engineering metrics*
+
+      | Field | Type | Description |
+      |-------|------|-------------|
+      | id | CHAR(24) PK | Snapshot ID |
+      | organization_id | CHAR(24) | Organization ID |
+      | user_id | CHAR(24) | User ID |
+      | efficiency | DECIMAL(10,2) | Efficiency score |
+      | date | DATE | Snapshot date |
+      | pr_cycle_time_in_progress_time | INT | PR in-progress time |
+      | pr_cycle_time_pickup_time | INT | PR pickup wait time |
+      | pr_cycle_time_review_time | INT | PR review time |
+      | pr_cycle_time_merge_time | INT | PR merge time |
+      | pr_cycle_time_cycle_time | INT | Total PR cycle time |
+      | pr_cycle_time_avg_cycle_time | INT | Avg PR cycle time |
+      | pr_cycle_time_pickup_pr | INT | Pickup PR count |
+      | pr_cycle_time_merge_pr | INT | Merged PR count |
+      | pr_cycle_time_in_progress_pr | INT | In-progress PR count |
+      | pr_cycle_time_review_pr | INT | Review PR count |
+      | pr_cycle_time_total_prs | INT | Total PRs |
+      | pr_avg_commits_total_commit_count | INT | Total commits |
+      | pr_avg_commits_pr_count | INT | PRs counted for commits |
+      | jira_quality_task_count | INT | JIRA tasks created |
+      | jira_quality_bug_count | INT | JIRA bugs created |
+      | jira_velocity_open_count | INT | JIRA open issues |
+      | jira_velocity_in_progress_count | INT | JIRA in-progress issues |
+      | jira_velocity_done_count | INT | JIRA done issues |
+      | jira_velocity_total_count | INT | Total JIRA issues |
+      | merge_frequency_merged_pull_request_count | INT | PRs merged |
+      | merge_frequency_total_pull_request_count | INT | Total PRs for merge frequency |
+      | merge_frequency_closed_pull_request_count | INT | Closed PRs |
+      | pr_merged_wo_review_percentage | INT | % merged without review |
+      | total_prs_created | INT | Total PRs created |
+      | pr_code_changes_additions | INT | Code additions |
+      | pr_code_changes_deletions | INT | Code deletions |
+      | issues_cycle_time_total | INT | Total issue cycle time |
+      | issues_resolved | INT | Issues resolved |
+      | failed_deployment | INT | Failed deployments |
+      | total_deployment | INT | Total deployments |
+      | burnout_value | VARCHAR(20) | Burnout status |
+      | burnout_last_notified_at | TIMESTAMP | Last burnout notification |
+      | code_review_issues_critical | INT | Critical review issues |
+      | code_review_issues_high | INT | High review issues |
+      | code_review_issues_medium | INT | Medium review issues |
+      | code_review_issues_low | INT | Low review issues |
+      | code_review_issues_info | INT | Informational review issues |
+      | created_at | TIMESTAMP | Created timestamp |
+      | updated_at | TIMESTAMP | Updated timestamp |
+
+      **Important Notes:**
+        - Many string fields may be nullable; always wrap with `COALESCE(column, '')` in SELECT queries to avoid NULLs in output.
+        - Use `LIMIT` in queries to prevent very large result sets unless explicitly required.
+
+      **Example Queries:**
+        - "List all organizations with Slack connected but no CI/CD integration."
+        - "Find all users who belong to multiple organizations."
+        - "Show all active teams grouped by organization."
+        - "SELECT id, name FROM Organization WHERE isSlackConnected = TRUE AND isCiCdConnected = FALSE;"
+        - "SELECT u.id, u.name, COUNT(uo.organizationId) AS org_count FROM User u JOIN UserOrganization uo ON u.id = uo.userId GROUP BY u.id HAVING org_count > 1;"
+
+  # === 2. FAQ Config Semantic Search ===
+  search_faq_config_semantic:
+    kind: mysql-sql
+    source: my-cloudsql-faq-source
+    statement: |
+      SELECT
+        id,
+        text,
+        DOT_PRODUCT(
+          embedding,
+          mysql.ml_embedding('gemini-embedding-001', ?)
+        ) AS similarity,
+        created_at
+      FROM faq_config
+      WHERE org_id = ?
+      ORDER BY similarity DESC
+      LIMIT 10;
+    description: |
+      Searches organization-specific FAQ configuration overrides
+      using semantic similarity. If no results are found, fallback to `search_faq_entries_semantic`.
+    parameters:
+      - name: query
+        type: string
+        description: User query text for semantic search
+      - name: org_id
+        type: integer
+        description: Organization ID
+
+  # === 3. Global FAQ Entries Semantic Search ===
+  search_faq_entries_semantic:
+    kind: mysql-sql
+    source: my-cloudsql-faq-source
+    statement: |
+      SELECT
+        id,
+        text,
+        DOT_PRODUCT(
+          embedding,
+          mysql.ml_embedding('gemini-embedding-001', ?)
+        ) AS similarity,
+        created_at
+      FROM faq_entries
+      ORDER BY similarity DESC
+      LIMIT 10;
+    description: |
+      Searches the global FAQ knowledge base for semantic matches.
+    parameters:
+      - name: query
+        type: string
+        description: User query text for semantic search
+
+############################################################
+# 🧠 TOOLSETS
+############################################################
+
+toolsets:
+  # Toolset for running GitHub / Org analytics
+  cloudsql_typo_agent_analysis_tools:
+    - execute_typo_agent_sql_query
+
+  # Toolset for FAQ search & config overrides
+  cloudsql_faq_analysis_tools:
+    - search_faq_config_semantic
+    - search_faq_entries_semantic
