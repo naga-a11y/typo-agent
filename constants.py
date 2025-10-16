@@ -18,7 +18,7 @@ PROJECT_ID = getenv("PROJECT_ID", "typoapp-442017")
 TOOLBOX_URL = getenv("TOOLBOX_URL", "https://toolbox-aua232uyqa-uc.a.run.app")
 ORG_ID = int(getenv("ORG_ID", "5"))
 DEFAULT_VERTEX_AI_MODEL_NAME = getenv(
-    "DEFAULT_VERTEX_AI_MODEL_NAME", "gemini-2.0-flash"
+    "DEFAULT_VERTEX_AI_MODEL_NAME", "gemini-2.5-pro"
 )
 
 # --- MySQL DATABASE CONFIGURATION ---
