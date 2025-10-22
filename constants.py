@@ -44,10 +44,10 @@ MEMORY_MYSQL_URL = (
 ORG_MAPPING = {
     "64a82f7170940b43db25c557": "GroundWorks",
     "641b549b0bf3107d660dc743": "Method",
-    "6": "WL Development",
+    "67cef86aa9dc9d4f31780583": "WL Development",
     "653fdd265cac3a6bd3787ac0": "PatientNow",
-    "8": "JemHR",
-    "9": "ToursByLocal",
+    "663c9ed5816e308921afb6ca": "JemHR",
+    "67893dbef45f711e6161daf7": "ToursByLocal",
 }
 
 # --- System Prompt & HTML ---
@@ -416,10 +416,10 @@ HTML_CONTENT = """
                     <option value="">Global FAQ</option>
                     <option value="64a82f7170940b43db25c557">GroundWorks</option>
                     <option value="641b549b0bf3107d660dc743">Method</option>
-                    <option value="6">WL Development</option>
+                    <option value="67cef86aa9dc9d4f31780583">WL Development</option>
                     <option value="653fdd265cac3a6bd3787ac0">PatientNow</option>
-                    <option value="8">JemHR</option>
-                    <option value="9">ToursByLocal</option>
+                    <option value="663c9ed5816e308921afb6ca">JemHR</option>
+                    <option value="67893dbef45f711e6161daf7">ToursByLocal</option>
                 </select>
             </div>
         </div>
