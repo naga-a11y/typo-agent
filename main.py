@@ -142,6 +142,7 @@ async def query_all(request: QueryRequest):
         if request.org_id:
             org_name = ORG_MAPPING.get(request.org_id, "No Organization")
             query_text = f"Organization ID: {request.org_id} ({org_name})\nUser Query: {request.query}"
+            logger.info(f"query text: {query_text}")
         else:
             query_text = (
                 f"No specific organization selected\nUser Query: {request.query}"
@@ -210,7 +211,7 @@ async def websocket_chat(websocket: WebSocket):
             user_content = types.Content(
                 role="user", parts=[types.Part(text=query_text)]
             )
-            run_config = RunConfig(streaming_mode=StreamingMode.SSE)
+            run_config = RunConfig(streaming_mode=StreamingMode.NONE)
 
             result_generator = parent_runner.run_async(
                 session_id=session_id,
@@ -219,35 +220,33 @@ async def websocket_chat(websocket: WebSocket):
                 run_config=run_config,
             )
 
-            await websocket.send_json({"sender": "bot", "text": "", "type": "start"})
-
             try:
-                prev_text = ""
+                response_text = ""
                 async for event in result_generator:
                     if event.content and event.content.parts:
                         for part in event.content.parts:
                             if hasattr(part, "text") and part.text:
-                                new_text = part.text[len(prev_text) :]
-                                if new_text:
-                                    await websocket.send_json(
-                                        {
-                                            "sender": "bot",
-                                            "text": new_text,
-                                            "type": "chunk",
-                                        }
-                                    )
-                                prev_text = part.text
-                                await asyncio.sleep(0)
-            except Exception as stream_err:
-                logger.error(f"Streaming error: {stream_err}", exc_info=True)
+                                response_text += part.text
+
+                if not response_text.strip():
+                    response_text = (
+                        "Would you like to clarify your question? "
+                        "I can help with engineering management, delivery, or team effectiveness."
+                    )
+
+                await websocket.send_json(
+                    {"sender": "bot", "text": response_text.strip(), "type": "final"}
+                )
+
+            except Exception as err:
+                logger.error(f"WebSocket query error: {err}", exc_info=True)
                 await websocket.send_json(
                     {
                         "sender": "bot",
                         "text": "Sorry, an error occurred while generating a response.",
-                        "type": "chunk",
+                        "type": "final",
                     }
                 )
-            await websocket.send_json({"sender": "bot", "type": "end"})
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session: {session_id}")
