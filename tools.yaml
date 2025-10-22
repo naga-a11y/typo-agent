@@ -316,7 +316,7 @@ tools:
         type: string
         description: User query text for semantic search
       - name: org_id
-        type: integer
+        type: string
         description: Organization ID
 
   # === 3. Global FAQ Entries Semantic Search ===
