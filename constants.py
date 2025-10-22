@@ -42,10 +42,10 @@ MEMORY_MYSQL_URL = (
 
 # --- Org Mapping ---
 ORG_MAPPING = {
-    "4": "GroundWorks",
-    "5": "Method",
+    "64a82f7170940b43db25c557": "GroundWorks",
+    "641b549b0bf3107d660dc743": "Method",
     "6": "WL Development",
-    "7": "PatientNow",
+    "653fdd265cac3a6bd3787ac0": "PatientNow",
     "8": "JemHR",
     "9": "ToursByLocal",
 }
@@ -93,7 +93,7 @@ Do **not** route these messages to any sub-agent.
 - If the question is about **who**, **what data**, **how many**, or **what trends** → use **GithubInsightsAgent**
 - Return only the **sub-agent’s response**, without adding extra commentary or explanation.
 - Never mention tools, databases, internal logic, queries, or system processes.
-- Never reveal internal identifiers such as organization IDs, table names, field names, or query details.
+- Never reveal internal identifiers such as organization IDs, User IDs, table names, field names, or query details.
 - Always summarize responses in **user-friendly, non-technical language** focused on insights or results.
 """
 
@@ -414,10 +414,10 @@ HTML_CONTENT = """
                 <label for="orgSelect">Organization:</label>
                 <select id="orgSelect">
                     <option value="">Global FAQ</option>
-                    <option value="4">GroundWorks</option>
-                    <option value="5">Method</option>
+                    <option value="64a82f7170940b43db25c557">GroundWorks</option>
+                    <option value="641b549b0bf3107d660dc743">Method</option>
                     <option value="6">WL Development</option>
-                    <option value="7">PatientNow</option>
+                    <option value="653fdd265cac3a6bd3787ac0">PatientNow</option>
                     <option value="8">JemHR</option>
                     <option value="9">ToursByLocal</option>
                 </select>
@@ -446,49 +446,32 @@ const orgSelect = document.getElementById("orgSelect");
 const typingIndicator = document.querySelector(".typing");
 
 let socket;
-let botMessageDiv = null;  // The current bot message being streamed
 
 function connectWebSocket() {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/chat`);
+
     socket.onopen = () => {
         console.log("✅ Connected to WebSocket");
     };
+
     socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
+
         if (data.sender === "bot") {
-            if (data.type === "start") {
-                hideTyping();
-                botMessageDiv = createMessageBubble("bot");
-                botMessageDiv.querySelector('.message-content').textContent = ""; // Clear content
-                chatBox.scrollTop = chatBox.scrollHeight;
-                return;
-            }
-            if (data.type === "chunk") {
-                // APPEND the streamed chunk, NOT replace
-                if (!botMessageDiv) {
-                    botMessageDiv = createMessageBubble("bot");
-                }
-                const contentElement = botMessageDiv.querySelector('.message-content');
-                contentElement.textContent += data.text;  // <<--- APPEND chunks
-                chatBox.scrollTop = chatBox.scrollHeight;
-                return;
-            }
-            if (data.type === "end") {
-                botMessageDiv = null;  // Ready for the next message
-                return;
-            }
-            // Fallback to add whatever bot message comes in
-            if (!botMessageDiv) botMessageDiv = createMessageBubble("bot");
-            botMessageDiv.querySelector('.message-content').textContent = data.text;
+            hideTyping();
+            const botMessageDiv = createMessageBubble("bot");
+            botMessageDiv.querySelector(".message-content").textContent = data.text;
             chatBox.scrollTop = chatBox.scrollHeight;
         }
     };
+
     socket.onclose = () => {
-        console.log("❌ WebSocket closed, attempting to reconnect...");
+        console.log("❌ WebSocket closed, reconnecting in 3s...");
         hideTyping();
         setTimeout(connectWebSocket, 3000);
     };
+
     socket.onerror = (error) => {
         console.error("WebSocket Error:", error);
         socket.close();
@@ -512,7 +495,7 @@ function createMessageBubble(sender) {
 
 function addUserMessage(text) {
     const msgDiv = createMessageBubble("user");
-    const content = msgDiv.querySelector('.message-content');
+    const content = msgDiv.querySelector(".message-content");
     const orgValue = orgSelect.value;
     const orgText = orgValue ? orgSelect.options[orgSelect.selectedIndex].text : "Global FAQ";
     content.innerHTML = text + ` <span class="org-badge">${orgText}</span>`;
@@ -531,20 +514,23 @@ function hideTyping() {
 function sendQuery() {
     const query = queryInput.value.trim();
     if (!query || !socket || socket.readyState !== WebSocket.OPEN) return;
+
     const orgId = orgSelect.value || null;
     addUserMessage(query);
     queryInput.value = "";
     showTyping();
+
     socket.send(JSON.stringify({ query: query, org_id: orgId }));
 }
 
 sendButton.addEventListener("click", sendQuery);
-queryInput.addEventListener("keydown", function(e) {
+queryInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendQuery();
     }
 });
+
 queryInput.focus();
 connectWebSocket();
 </script>
