@@ -182,6 +182,7 @@ HTML_CONTENT = """
 <html>
 <head>
     <title>AI Chatbot</title>
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -402,11 +403,62 @@ HTML_CONTENT = """
         #chat::-webkit-scrollbar-thumb:hover {
             background: #a8a8a8;
         }
+
+        /* Markdown styling */
+        .message-content h1, .message-content h2, .message-content h3 {
+            margin: 8px 0;
+            font-weight: 600;
+        }
+
+        .message-content p {
+            margin: 6px 0;
+        }
+
+        .message-content ul, .message-content ol {
+            margin: 6px 0 6px 20px;
+        }
+
+        .message-content code {
+            background: #f1f3f5;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #c7254e;
+        }
+
+        .message-content pre {
+            background: #f1f3f5;
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .message-content a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        .message-content a:hover {
+            text-decoration: underline;
+        }
     </style>
+
+    <!-- ✅ Markdown + Sanitizer Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.3/dist/purify.min.js"></script>
+
+    <script>
+        // Configure Markdown rendering
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+    </script>
 </head>
 <body>
     <div class="header">
-        <h1>AI Assistant</h1>
+        <h1>Typo Agent</h1>
     </div>
     <div id="chat-container">
         <div class="controls">
@@ -461,7 +513,11 @@ function connectWebSocket() {
         if (data.sender === "bot") {
             hideTyping();
             const botMessageDiv = createMessageBubble("bot");
-            botMessageDiv.querySelector(".message-content").textContent = data.text;
+
+            // Render Markdown safely
+            const cleanHtml = DOMPurify.sanitize(marked.parse(data.text || ""));
+            botMessageDiv.querySelector(".message-content").innerHTML = cleanHtml;
+
             chatBox.scrollTop = chatBox.scrollHeight;
         }
     };
